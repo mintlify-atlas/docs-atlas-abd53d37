@@ -1,0 +1,124 @@
+{
+  "projectType": "saas",
+  "projectName": "Audora",
+  "projectDescription": "Audora is a full-stack, self-hostable podcast recording platform with WebRTC-powered real-time audio/video capture, multipart S3 uploads, and a media processing pipeline built on Turborepo and Bun.",
+  "theme": "palm",
+  "primaryColor": "#7c7c7c",
+  "lightColor": "#040404",
+  "darkColor": "#dadada",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/recording",
+              "features/webrtc",
+              "features/uploads",
+              "features/studio",
+              "features/projects"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/database",
+              "configuration/authentication"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/ci-cd",
+              "deployment/self-hosting"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/local-setup",
+              "development/monorepo",
+              "development/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api-reference/auth",
+              "api-reference/studio",
+              "api-reference/projects",
+              "api-reference/recordings",
+              "api-reference/meetings"
+            ]
+          },
+          {
+            "group": "Signal Server",
+            "pages": [
+              "api-reference/websocket-events"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "WebRTC peer-to-peer audio/video recording with low-latency streaming",
+    "Multipart S3 uploads with chunked transfer and retry logic",
+    "Real-time signaling server (WebSocket) for room and meeting management",
+    "Studio settings: recording type, audio sample rate, video quality, noise reduction",
+    "Project and track management with PostgreSQL/Prisma data layer",
+    "Google OAuth and credentials-based authentication via NextAuth.js",
+    "Full Docker Compose deployment with health checks",
+    "Turborepo monorepo with shared packages for types, database, and UI",
+    "GitHub Actions CI/CD pipelines for frontend, backend, and signal services",
+    "Media processing pipeline with Kafka queue integration"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/register",
+    "POST /api/auth/login",
+    "POST /api/auth/google",
+    "GET /api/studio/get",
+    "POST /api/studio/create",
+    "PUT /api/studio/update",
+    "DELETE /api/studio/delete",
+    "POST /api/studio/update-setting",
+    "GET /api/project/get/:projectId",
+    "GET /api/project/get-all/:studioId",
+    "POST /api/project/create",
+    "PUT /api/project/update/:projectId",
+    "DELETE /api/project/delete/:projectId",
+    "POST /api/recording/chunks",
+    "POST /api/meeting/generate-token",
+    "WebSocket: mic:toggle",
+    "WebSocket: cam:toggle",
+    "WebSocket: recording:start",
+    "WebSocket: recording:stop",
+    "WebSocket: webrtc:offer",
+    "WebSocket: webrtc:answer",
+    "WebSocket: webrtc:ice-candidate"
+  ]
+}
