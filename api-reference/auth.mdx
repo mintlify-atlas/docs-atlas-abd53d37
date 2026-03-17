@@ -1,0 +1,272 @@
+---
+title: 'Auth endpoints'
+description: 'Register and log in users. Issues access tokens for authenticating subsequent API requests.'
+---
+
+All auth endpoints are rate-limited. Exceeding the limit returns `429 Too Many Requests`.
+
+---
+
+## Register
+
+<ParamField path="body.name" type="string" required>
+  Display name. Between 2 and 16 characters.
+</ParamField>
+
+<ParamField path="body.email" type="string" required>
+  User's email address. Must be a valid email format.
+</ParamField>
+
+<ParamField path="body.password" type="string" required>
+  Password. 6–16 characters. Must contain at least one uppercase letter, one lowercase letter, one number, and one special character.
+</ParamField>
+
+`POST /auth/register`
+
+Creates a new user account and automatically provisions a default studio. Returns the created user, the studio, and no access token — call `/auth/login` after registration to obtain one.
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"User created successfully"`
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">Unique user ID (UUID).</ResponseField>
+    <ResponseField name="name" type="string">Display name.</ResponseField>
+    <ResponseField name="email" type="string">Email address.</ResponseField>
+    <ResponseField name="image" type="string">Profile image URL. May be `null`.</ResponseField>
+    <ResponseField name="provider" type="string">`"credentials"` for password-based accounts.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="updatedAt" type="string">ISO 8601 last-updated timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="studio" type="object">
+  The default studio created for the user. See [Studio endpoints](/api-reference/studio) for the full studio shape.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST http://localhost:9000/auth/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Jane Smith",
+        "email": "jane@example.com",
+        "password": "Secret1!"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "User created successfully",
+      "user": {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "Jane Smith",
+        "email": "jane@example.com",
+        "image": null,
+        "provider": "credentials",
+        "createdAt": "2024-01-15T10:30:00.000Z",
+        "updatedAt": "2024-01-15T10:30:00.000Z"
+      },
+      "studio": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "studioSlug": "jane-smith-s-studio",
+        "studioName": "jane-smith's-studio",
+        "recordingType": "VIDEO_AUDIO",
+        "audioSampleRate": "KHZ_44_1",
+        "videoQuality": "STANDARD",
+        "language": "English",
+        "noiseReduction": false,
+        "countdownBeforeRecording": false,
+        "enableLobby": false,
+        "enableCaptions": false,
+        "autoStartOnGuestJoin": false,
+        "pauseUploads": false
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Error | Cause |
+|--------|-------|-------|
+| `400` | Validation error array | Input failed schema validation |
+| `400` | `"Username already taken"` | Email is already registered |
+| `500` | `"Internal server error"` | Unexpected server error |
+
+---
+
+## Login
+
+`POST /auth/login`
+
+Authenticates a user with email and password. Returns an access token and the user's studio slug.
+
+<ParamField path="body.email" type="string" required>
+  Registered email address.
+</ParamField>
+
+<ParamField path="body.password" type="string" required>
+  Account password.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Login successful"`
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">Unique user ID (UUID).</ResponseField>
+    <ResponseField name="name" type="string">Display name.</ResponseField>
+    <ResponseField name="email" type="string">Email address.</ResponseField>
+    <ResponseField name="image" type="string">Profile image URL. May be `null`.</ResponseField>
+    <ResponseField name="provider" type="string">Auth provider. `"credentials"` for password accounts.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="updatedAt" type="string">ISO 8601 last-updated timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="studioSlug" type="string">
+  The URL slug for the user's studio.
+</ResponseField>
+
+<ResponseField name="accessToken" type="string">
+  JWT for authenticating subsequent API requests. Include as `Authorization: Bearer <accessToken>`.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST http://localhost:9000/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "jane@example.com",
+        "password": "Secret1!"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Login successful",
+      "user": {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "Jane Smith",
+        "email": "jane@example.com",
+        "image": null,
+        "provider": "credentials",
+        "createdAt": "2024-01-15T10:30:00.000Z",
+        "updatedAt": "2024-01-15T10:30:00.000Z"
+      },
+      "studioSlug": "jane-smith-s-studio",
+      "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Error | Cause |
+|--------|-------|-------|
+| `400` | Validation error array | Input failed schema validation |
+| `401` | `"Invalid email or password"` | User not found or password mismatch |
+| `500` | `"Internal server error"` | Unexpected server error |
+
+---
+
+## Google sign-in
+
+`POST /auth/google`
+
+Registers a new user or logs in an existing Google-authenticated user. If the email is already registered via a password account, the request is rejected. A default studio is created for new users.
+
+<ParamField path="body.email" type="string" required>
+  Email address from the Google OAuth profile.
+</ParamField>
+
+<ParamField path="body.name" type="string">
+  Display name from the Google OAuth profile. Defaults to `"Google User"` if omitted.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"User created successfully"` for new users.
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">Unique user ID (UUID).</ResponseField>
+    <ResponseField name="name" type="string">Display name.</ResponseField>
+    <ResponseField name="email" type="string">Email address.</ResponseField>
+    <ResponseField name="image" type="string">Profile image URL. May be `null`.</ResponseField>
+    <ResponseField name="provider" type="string">`"google"`</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="updatedAt" type="string">ISO 8601 last-updated timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="studioSlug" type="string">
+  URL slug for the user's studio. Included for new registrations.
+</ResponseField>
+
+<ResponseField name="accessToken" type="string">
+  JWT for authenticating subsequent API requests.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST http://localhost:9000/auth/google \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "jane@gmail.com",
+        "name": "Jane Smith"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "User created successfully",
+      "user": {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "Jane Smith",
+        "email": "jane@gmail.com",
+        "image": null,
+        "provider": "google",
+        "createdAt": "2024-01-15T10:30:00.000Z",
+        "updatedAt": "2024-01-15T10:30:00.000Z"
+      },
+      "studioSlug": "jane-smith-s-studio",
+      "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Error | Cause |
+|--------|-------|-------|
+| `400` | `"Email already registered with password..."` | Email exists as a credentials account |
+| `500` | `"Failed to create studio"` | Studio provisioning failed |
+| `500` | `"Internal server error"` | Unexpected server error |

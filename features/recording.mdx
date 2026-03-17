@@ -1,0 +1,166 @@
+---
+title: "Recording"
+description: "Browser-based local track capture using the MediaRecorder API"
+---
+
+Audora records each participant locally in the browser using the native **MediaRecorder API**. Because capture happens on-device rather than server-side, audio and video quality is limited only by the participant's hardware — not network conditions.
+
+## Recording types
+
+Each studio can be configured for one of two recording modes, controlled by the `recordingType` field on the `Studio` model:
+
+| Mode | Value | Description |
+|---|---|---|
+| Video + Audio | `VIDEO_AUDIO` | Captures both camera and microphone tracks |
+| Audio only | `AUDIO_ONLY` | Captures the microphone track only |
+
+## Recording status lifecycle
+
+Every `Recording` row in the database moves through a defined set of states:
+
+| Status | Meaning |
+|---|---|
+| `RECORDING` | Chunks are actively being captured and uploaded |
+| `MERGING` | All chunks have been received; server is stitching them together |
+| `COMPLETED` | The merged file is available via `videoUrl` |
+| `FAILED` | An error occurred during capture or merging |
+
+## Audio and video quality settings
+
+Two quality enums are exposed through studio settings:
+
+**Audio sample rate** (`audioSampleRate`)
+- `KHZ_44_1` — 44.1 kHz, CD-quality audio (default)
+- `KHZ_48` — 48 kHz, broadcast-standard audio
+
+**Video quality** (`videoQuality`)
+- `STANDARD` — 1280×720 at up to 30 fps (default)
+- `ADVANCED` — Higher bitrate encoding for improved visual fidelity
+
+The MediaRecorder is initialised with `audioBitsPerSecond: 128000` and `videoBitsPerSecond: 4000000` for the `ADVANCED` preset.
+
+## Codec selection
+
+The recording hooks attempt MIME types in order of preference and fall back gracefully:
+
+```typescript
+const SUPPORTED_MIME_TYPES = [
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm;codecs=vp9',
+  'video/webm;codecs=vp8',
+  'video/webm',
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+  'audio/wav',
+];
+```
+
+## Chunk-based capture
+
+Rather than collecting a single large blob, the `useAdvancedRecording` hook creates a new `MediaRecorder` instance every `chunkDurationMs` milliseconds (default: 5 seconds). When each recorder stops it fires `ondataavailable`, producing a `ChunkData` object:
+
+```typescript
+interface ChunkData {
+  blob: Blob;     // raw media data
+  index: number;  // sequential chunk index
+  startTime: number;
+  endTime: number;
+  timestamp: number;
+  size: number;
+}
+```
+
+Each chunk is then passed to the upload queue via `onChunkAvailable`.
+
+## Countdown before recording
+
+When `countdownBeforeRecording` is enabled in studio settings, `useAdvancedRecording` runs a countdown (default 5 seconds) before the `MediaRecorder` starts. The Zustand `useRecordingStore` tracks `isCountdownActive` and `countdownValue` so the UI can render a countdown overlay.
+
+```typescript
+// recording-store.ts
+export const useRecordingStore = create<RecordingStore>(set => ({
+  isRecording: false,
+  isCountdownActive: false,
+  countdownValue: 3,
+  startCountdown: (seconds = 3) => {
+    set({ isCountdownActive: true, countdownValue: seconds });
+  },
+  onCountdownComplete: async () => {
+    set({ isCountdownActive: false, isRecording: true });
+  },
+}));
+```
+
+## Recording workflow
+
+<Steps>
+  <Step title="User joins the studio">
+    `useInitMeeting` acquires camera and microphone access via `useMediaDevices`, which calls `navigator.mediaDevices.getUserMedia` and enumerates available devices. The resulting `MediaStream` is stored in `useSystemStreamStore`.
+  </Step>
+
+  <Step title="Countdown (optional)">
+    If `countdownBeforeRecording` is enabled, `startCountdown` is called. The UI displays a countdown timer. When it reaches zero, `onCountdownComplete` sets `isRecording: true` and the actual capture begins.
+  </Step>
+
+  <Step title="MediaRecorder starts">
+    `useAdvancedRecording` creates a `MediaRecorder` bound to the system stream. It starts immediately (no `timeSlice` argument) and is stopped programmatically after `chunkDurationMs` to produce one timed chunk.
+  </Step>
+
+  <Step title="Chunks are produced">
+    Each recorder's `ondataavailable` event fires with a `Blob`. The hook assembles a `ChunkData` object with timing metadata and calls `onChunkAvailable`. A new recorder instance is then started for the next chunk.
+  </Step>
+
+  <Step title="Chunks are enqueued for upload">
+    `useChunkUploadQueue` receives each chunk via `enqueue`. The queue processes tasks sequentially, calling the `uploadChunks` server action which posts the chunk as `multipart/form-data` to the API.
+  </Step>
+
+  <Step title="Recording stops">
+    When the host calls `stopRecording`, the current `MediaRecorder` is stopped. The final chunk is marked `isFinal: true` in the upload payload. The server transitions the `Recording` status from `RECORDING` to `MERGING`.
+  </Step>
+
+  <Step title="Merge and completion">
+    After all chunks are received, the backend stitches them into a single file. The `Recording` status moves to `COMPLETED` and `videoUrl` is populated. On failure the status is set to `FAILED`.
+  </Step>
+</Steps>
+
+## useAdvancedRecording hook
+
+The primary recording hook used in the studio:
+
+```typescript
+const {
+  isRecording,
+  isCountdownActive,
+  countdownValue,
+  chunkIndex,
+  totalDuration,
+  startRecording,
+  stopRecording,
+  formatDuration,
+} = useAdvancedRecording({
+  stream,                       // MediaStream from useSystemStreamStore
+  chunkDurationMs: 5000,        // produce a new chunk every 5 seconds
+  countdownDuration: 5,         // seconds of countdown before recording
+  onChunkAvailable: (chunk) => {
+    enqueue({
+      blob: chunk.blob,
+      userId,
+      roomId,
+      projectId,
+      trackId,
+      startTime: chunk.startTime,
+      endTime: chunk.endTime,
+      isFinal: false,
+    });
+  },
+});
+```
+
+## Browser compatibility
+
+<Note>
+The MediaRecorder API is required. Audora supports Chrome 47+, Firefox 25+, Safari 14.1+, and Edge 79+.
+</Note>

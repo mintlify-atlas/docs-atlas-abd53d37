@@ -1,0 +1,200 @@
+---
+title: "Projects & tracks"
+description: "The data model that organises recording sessions within a studio"
+---
+
+Audora organises recorded content in a four-level hierarchy:
+
+```
+Studio
+  └── Project          (one recording session)
+        └── Track      (one participant's media)
+              └── Recording   (individual chunk or merged file)
+```
+
+Each level maps directly to a Prisma model backed by PostgreSQL.
+
+## Data model
+
+### Studio
+
+The top-level container. Each user account owns one studio. Projects are created inside the studio.
+
+```prisma
+model Studio {
+  id         String @id @default(uuid())
+  studioSlug String @unique
+  studioName String
+  projects   Project[] @relation("StudioProject")
+}
+```
+
+### Project
+
+A **project** represents a single recording session — for example, one episode of a podcast. It holds a human-readable `title` and belongs to a studio.
+
+```prisma
+model Project {
+  id        String   @id @default(uuid())
+  title     String
+  studioId  String
+  createdAt DateTime @default(now())
+
+  studio Studio  @relation("StudioProject", fields: [studioId], references: [id], onDelete: Cascade)
+  tracks Track[] @relation("ProjectTrack")
+}
+```
+
+### Track
+
+A **track** represents one participant's media output within a project. Every person who joins a session and records produces one track. After the session the backend merges their individual chunks into a single file stored in `mergedVideoUrl`.
+
+```prisma
+model Track {
+  id             String   @id @default(uuid())
+  name           String?          // participant display name
+  projectId      String
+  mergedVideoUrl String?          // populated after server-side merge
+  createdAt      DateTime @default(now())
+
+  project    Project     @relation("ProjectTrack", fields: [projectId], references: [id])
+  recordings Recording[] @relation("RecordingTrack")
+}
+```
+
+### Recording
+
+A **recording** is an individual segment or chunk within a track. Multiple recordings accumulate during a session; once all chunks arrive the backend stitches them and updates `videoUrl`.
+
+```prisma
+model Recording {
+  id           String          @id @default(uuid())
+  trackId      String
+  displayName  String
+  videoUrl     String?         // populated when status = COMPLETED
+  duration     Int?            // duration in milliseconds
+  resolution   String?         @default("1280x720")
+  thumbnailUrl String?         @default("https://via.placeholder.com/150")
+  status       RecordingStatus @default(RECORDING)
+  createdAt    DateTime        @default(now())
+
+  track Track @relation("RecordingTrack", fields: [trackId], references: [id])
+}
+
+enum RecordingStatus {
+  RECORDING   // chunks are being received
+  MERGING     // all chunks received; merge in progress
+  COMPLETED   // merged file available at videoUrl
+  FAILED      // merge or capture error
+}
+```
+
+## Hierarchy at a glance
+
+| Level | Model | Key fields | Cardinality |
+|---|---|---|---|
+| Workspace | `Studio` | `studioSlug`, `studioName`, `token` | 1 per user |
+| Session | `Project` | `title`, `studioId` | Many per studio |
+| Participant media | `Track` | `name`, `projectId`, `mergedVideoUrl` | Many per project |
+| Segment / chunk | `Recording` | `videoUrl`, `duration`, `status` | Many per track |
+
+## How a session maps to the data model
+
+When a studio session begins:
+
+1. The host creates a **Project** via the API. The `projectId` is broadcast to all participants through the signal server (`project-id` message).
+2. Each participant creates a **Track** for themselves. The `trackId` is also broadcast via the signal server (`track-id` message).
+3. As each participant records, **Recording** rows are created for their chunks (one per upload in the current implementation).
+4. When recording stops and all chunks are uploaded, the backend merges them and updates the `Track.mergedVideoUrl` and each `Recording.status`.
+
+## API endpoints
+
+### Create a project
+
+```http
+POST /api/projects
+Content-Type: application/json
+
+{
+  "title": "Episode 42",
+  "studioId": "<uuid>"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Project created successfully",
+  "data": {
+    "id": "<uuid>",
+    "title": "Episode 42",
+    "studioId": "<uuid>",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  }
+}
+```
+
+### List projects for a studio
+
+```http
+GET /api/projects?studioSlug=my-show&page=1
+```
+
+The endpoint resolves the `studioSlug` to a `Studio` record, then returns paginated projects sorted by creation date.
+
+### Get a single project
+
+```http
+GET /api/projects/:projectId
+```
+
+Returns the project with nested tracks and their recordings.
+
+### Update a project title
+
+```http
+PATCH /api/projects/:projectId
+Content-Type: application/json
+
+{
+  "title": "Episode 42 (Final Cut)"
+}
+```
+
+### Delete a project
+
+```http
+DELETE /api/projects/:projectId
+```
+
+Deletes the project and cascades to all tracks and recordings within it.
+
+## Signal server integration
+
+The signal server maintains `projectId` and `trackId` on the in-memory `Room` object. When the host creates a project:
+
+1. The frontend sends a `project-id` message to the signal server.
+2. The server stores it on the room and broadcasts it to all other participants.
+3. Participants use the received `projectId` when uploading chunks, ensuring all tracks reference the same project.
+
+```typescript
+// meetingHandler.ts
+case 'project-id': {
+  const { projectId } = data;
+  addProjectId(studioSlug, socket, projectId); // stores + broadcasts
+  break;
+}
+```
+
+The same pattern applies to `trackId`, so every participant's upload queue knows which track to associate their chunks with.
+
+<CardGroup cols={2}>
+  <Card title="Recording" href="/features/recording">
+    How chunks are captured in the browser and linked to a Track
+  </Card>
+  <Card title="Chunked uploads" href="/features/uploads">
+    How chunk data flows from the browser to the API and into storage
+  </Card>
+</CardGroup>

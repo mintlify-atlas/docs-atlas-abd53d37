@@ -1,0 +1,179 @@
+---
+title: "Studio settings"
+description: "Configuring your Audora studio for recording sessions"
+---
+
+An Audora **studio** is the persistent workspace owned by a single user. It has a unique public URL (`studioSlug`), a set of recording preferences, and a guest access token. All recording sessions happen inside a studio.
+
+## Studio model
+
+The `Studio` model is defined in the Prisma schema:
+
+```prisma
+model Studio {
+  id         String @id @default(uuid())
+  studioSlug String @unique      // URL-safe identifier
+  studioName String
+  token      String @unique @default(cuid())  // guest access token
+
+  enableLobby              Boolean         @default(false)
+  enableCaptions           Boolean         @default(false)
+  recordingType            RecordingType   @default(VIDEO_AUDIO)
+  audioSampleRate          AudioSampleRate @default(KHZ_44_1)
+  videoQuality             VideoQuality    @default(STANDARD)
+  countdownBeforeRecording Boolean         @default(false)
+  autoStartOnGuestJoin     Boolean         @default(false)
+  noiseReduction           Boolean         @default(false)
+  pauseUploads             Boolean         @default(false)
+  language                 String          @default("English")
+
+  userId   String    @unique
+  projects Project[] @relation("StudioProject")
+}
+```
+
+Each user account can own **one** studio. Deleting a studio cascades to all its projects, tracks, and recordings.
+
+## Studio token
+
+The `token` field is a unique `cuid()` generated at studio creation time. It is used to grant guest access without requiring guests to have an Audora account.
+
+A guest shares the token (or a link containing it) with the people they want to invite. The frontend exchanges the token for a short-lived JWT meeting token that authorizes the WebSocket connection to `audora-signal`.
+
+<Warning>
+Anyone with the studio token can join as a guest. Regenerate the token if you need to revoke access for previously invited participants.
+</Warning>
+
+## All configurable settings
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `studioName` | `string` | — | Display name shown to participants |
+| `studioSlug` | `string` | — | URL identifier (e.g. `/studio/my-show`) |
+| `enableLobby` | `boolean` | `false` | Hold guests in a waiting room until the host admits them |
+| `enableCaptions` | `boolean` | `false` | Enable live caption generation during sessions |
+| `recordingType` | `RecordingType` | `VIDEO_AUDIO` | `VIDEO_AUDIO` or `AUDIO_ONLY` |
+| `audioSampleRate` | `AudioSampleRate` | `KHZ_44_1` | `KHZ_44_1` (44.1 kHz) or `KHZ_48` (48 kHz) |
+| `videoQuality` | `VideoQuality` | `STANDARD` | `STANDARD` (720p) or `ADVANCED` |
+| `countdownBeforeRecording` | `boolean` | `false` | Show a countdown timer before capture starts |
+| `autoStartOnGuestJoin` | `boolean` | `false` | Automatically start recording when the first guest joins |
+| `noiseReduction` | `boolean` | `false` | Apply browser-level noise suppression to audio tracks |
+| `pauseUploads` | `boolean` | `false` | Pause chunk uploads until the host explicitly resumes them |
+| `language` | `string` | `"English"` | Preferred language for captions |
+
+## Client-side settings store
+
+Settings are split into two logical groups in `useStudioSettingsStore`:
+
+```typescript
+export interface StudioSettings {
+  studioSlug: string;
+  studioName: string;
+  enableLobby: boolean;
+  language: string;
+  enableCaptions: boolean;
+  studioFixedToken?: string;
+}
+
+export interface StudioRecordingSetting {
+  recordingType: RecordingType;    // 'AUDIO' | 'VIDEO_AUDIO'
+  audioSampleRate: AudioSampleRate; // 'KHZ_44_1' | 'KHZ_48_0'
+  videoQuality: VideoQuality;      // 'STANDARD' | 'HIGH'
+  noiseReduction: boolean;
+  countdownBeforeRecording: boolean;
+  autoStartOnGuestJoin: boolean;
+  pauseUploads: boolean;
+}
+```
+
+## API endpoints
+
+All studio endpoints require authentication. The `req.auth.id` must match the `userId` on the studio record for write operations.
+
+### Create a studio
+
+```http
+POST /api/studio
+Content-Type: application/json
+
+{
+  "studioName": "My Podcast Studio"
+}
+```
+
+The API enforces a **one studio per user** limit. Creating a second studio returns `400` with `"Studio already exists"`.
+
+Default values applied on creation:
+
+```typescript
+await createStudioService({
+  studioName,
+  userId,
+  recordingType: 'VIDEO_AUDIO',
+  audioSampleRate: 'KHZ_44_1',
+  videoQuality: 'STANDARD',
+  noiseReduction: false,
+  language: 'English',
+  countdownBeforeRecording: false,
+  autoStartOnGuestJoin: false,
+  pauseUploads: false,
+  enableLobby: false,
+  enableCaptions: false,
+});
+```
+
+### Get your studio
+
+```http
+GET /api/studio
+```
+
+Returns the full studio object including all settings and the guest token.
+
+### Update the studio name
+
+```http
+PATCH /api/studio
+Content-Type: application/json
+
+{
+  "studioId": "<uuid>",
+  "studioName": "New Studio Name"
+}
+```
+
+### Update a single setting
+
+```http
+PATCH /api/studio/settings
+Content-Type: application/json
+
+{
+  "studioId": "<uuid>",
+  "settingName": "enableLobby",
+  "settingValue": true
+}
+```
+
+The controller validates that the authenticated user owns the studio before applying the change:
+
+```typescript
+if (studio.id !== studioId) {
+  res.status(403).json({
+    success: false,
+    message: 'You are not authorized to update this studio setting',
+  });
+}
+```
+
+### Delete the studio
+
+```http
+DELETE /api/studio
+```
+
+Deletes the studio and all associated data (projects, tracks, recordings) via Prisma cascade.
+
+<Tip>
+Use `PATCH /api/studio/settings` for individual setting toggles rather than sending the full studio object. This minimises the risk of overwriting concurrent changes.
+</Tip>

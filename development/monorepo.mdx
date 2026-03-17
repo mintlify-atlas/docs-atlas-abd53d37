@@ -1,0 +1,277 @@
+---
+title: "Monorepo structure"
+description: "How the Audora codebase is organized as a Turborepo monorepo."
+---
+
+Audora is a **monorepo** managed with [Turborepo](https://turborepo.com). All applications and shared packages live in the same repository, which lets them share code, configuration, and build caches without publishing to a package registry.
+
+```text
+audora/
+├── apps/
+│   ├── audora-frontend/       # Next.js UI
+│   ├── audora-api/            # Express REST API
+│   └── audora-signal/         # WebSocket signalling server
+├── packages/
+│   ├── database/              # Prisma schema and database services
+│   ├── types/                 # Shared TypeScript types and Zod schemas
+│   ├── typescript-config/     # Shared tsconfig bases
+│   ├── eslint-config/         # Shared ESLint configurations
+│   └── tailwind-css/          # Shared Tailwind CSS configuration
+├── docker/                    # Production Dockerfiles
+├── .github/workflows/         # GitHub Actions CI/CD pipelines
+├── turbo.json                 # Turborepo pipeline configuration
+├── docker-compose.yml         # Full-stack Docker Compose
+└── package.json               # Root workspace configuration
+```
+
+---
+
+## Apps
+
+<CardGroup cols={2}>
+  <Card title="audora-frontend" icon="browser">
+    **Next.js 14 application** that provides the user interface. Uses Turbopack during development for fast hot-module replacement.
+
+    - Package name: `audora-frontend`
+    - Dev server: http://localhost:3000
+    - Key dependencies: React 19, NextAuth, TanStack Query, Zustand, Tailwind CSS
+    - Consumes: `@audora/types`, `@audora/eslint-config`, `@audora/typescript-config`
+  </Card>
+
+  <Card title="audora-api" icon="server">
+    **Express 5 REST API** that handles authentication, project management, media uploads, and background job queuing via BullMQ and Kafka.
+
+    - Package name: `audora-api`
+    - Dev server: http://localhost:9000
+    - Key dependencies: Express, BullMQ, KafkaJS, Multer, bcrypt, JWT
+    - Consumes: `@audora/database`, `@audora/types`, `@audora/eslint-config`, `@audora/typescript-config`
+  </Card>
+
+  <Card title="audora-signal" icon="signal">
+    **WebSocket signalling server** built on the `ws` library. Manages WebRTC peer connections and room state for real-time recording sessions.
+
+    - Package name: `audora-signal`
+    - Dev server: http://localhost:8000
+    - Key dependencies: ws, JWT, uuid, chalk
+    - Consumes: `@audora/database`, `@audora/types`, `@audora/eslint-config`, `@audora/typescript-config`
+  </Card>
+</CardGroup>
+
+---
+
+## Packages
+
+<CardGroup cols={2}>
+  <Card title="@audora/database" icon="database">
+    Contains the Prisma schema, migrations, and all database service modules (user, studio, project, track, recording). Both the API and signal server depend on this package.
+
+    Exports are scoped by domain:
+    ```json
+    {
+      "./userServices": "./src/services/user-services.ts",
+      "./studioServices": "./src/services/studio-services.ts",
+      "./projectServices": "./src/services/project-services.ts",
+      "./trackServices": "./src/services/track-services.ts",
+      "./recordingServices": "./src/services/recording-services.ts"
+    }
+    ```
+  </Card>
+
+  <Card title="@audora/types" icon="code">
+    Shared TypeScript type definitions and [Zod](https://zod.dev) validation schemas consumed by all three apps. Exporting from a single package ensures type consistency across the entire stack.
+
+    Entry point: `index.ts`
+  </Card>
+
+  <Card title="@audora/typescript-config" icon="file-code">
+    Shared `tsconfig.json` base configurations. Apps extend from these to maintain consistent compiler options across the monorepo without duplicating settings.
+  </Card>
+
+  <Card title="@audora/eslint-config" icon="check-circle">
+    Shared ESLint rule sets. Each app's `.eslintrc` (or `eslint.config.*`) extends from this package so linting rules stay uniform.
+  </Card>
+
+  <Card title="tailwind-css" icon="paintbrush">
+    Shared Tailwind CSS configuration, including design tokens and preset extensions used by the frontend.
+  </Card>
+</CardGroup>
+
+---
+
+## Package naming convention
+
+All internal packages follow the `@audora/*` scoped naming convention:
+
+```
+@audora/database
+@audora/types
+@audora/typescript-config
+@audora/eslint-config
+```
+
+In any app's `package.json`, internal packages are referenced using the workspace wildcard version:
+
+```json
+{
+  "dependencies": {
+    "@audora/database": "*",
+    "@audora/types": "*"
+  },
+  "devDependencies": {
+    "@audora/eslint-config": "*",
+    "@audora/typescript-config": "*"
+  }
+}
+```
+
+Bun workspaces resolve `"*"` to the local package on disk — no registry publishing required.
+
+---
+
+## Turborepo pipeline
+
+The `turbo.json` at the repository root defines the **task pipeline** — the dependency graph that Turborepo uses to order and cache work across packages.
+
+```json
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "start:api": {
+      "dependsOn": ["^db:deploy"],
+      "cache": false,
+      "persistent": true
+    },
+    "start:signal": {
+      "dependsOn": ["^db:deploy"],
+      "cache": false,
+      "persistent": true
+    }
+  }
+}
+```
+
+### Pipeline tasks
+
+| Task | `dependsOn` | Cached | Description |
+|---|---|---|---|
+| `build` | `^build` | Yes | Builds all packages before apps that depend on them |
+| `lint` | `^lint` | Yes | Lints packages in dependency order |
+| `check-types` | `^check-types` | Yes | Type-checks in dependency order |
+| `dev` | — | No | Starts all dev servers concurrently (persistent) |
+| `start:frontend` | `build` | Yes | Builds then starts the Next.js server |
+| `start:api` | `^db:deploy` | No | Runs migrations before starting the API |
+| `start:signal` | `^db:deploy` | No | Runs migrations before starting the signal server |
+
+<Tip>
+  The `^` prefix in `dependsOn` means "run the same task in all upstream dependencies first". For example, `"dependsOn": ["^build"]` ensures every package the app imports is built before the app itself.
+</Tip>
+
+---
+
+## Adding a new package
+
+<Steps>
+  <Step title="Create the package directory">
+    ```bash
+    mkdir packages/my-package
+    ```
+  </Step>
+
+  <Step title="Add a package.json">
+    Follow the `@audora/*` naming convention:
+
+    ```json
+    {
+      "name": "@audora/my-package",
+      "type": "module",
+      "private": true,
+      "exports": {
+        ".": "./index.ts"
+      },
+      "devDependencies": {
+        "@audora/typescript-config": "*",
+        "typescript": "^5.9.3"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Add a tsconfig.json">
+    Extend from the shared config:
+
+    ```json
+    {
+      "extends": "@audora/typescript-config/base.json",
+      "include": ["."],
+      "exclude": ["node_modules"]
+    }
+    ```
+  </Step>
+
+  <Step title="Add the package as a dependency">
+    In any app or package that needs it, add to `package.json`:
+
+    ```json
+    {
+      "dependencies": {
+        "@audora/my-package": "*"
+      }
+    }
+    ```
+
+    Then run `bun install` from the repository root to link the workspace.
+  </Step>
+</Steps>
+
+---
+
+## Adding a new app
+
+<Steps>
+  <Step title="Create the app directory">
+    ```bash
+    mkdir apps/my-app
+    ```
+  </Step>
+
+  <Step title="Add a package.json">
+    Apps do not need to follow the `@audora/*` scope — use a plain name:
+
+    ```json
+    {
+      "name": "my-app",
+      "type": "module",
+      "private": true,
+      "scripts": {
+        "dev": "bun run src/index.ts",
+        "build": "bun build src/index.ts --outdir dist",
+        "lint": "eslint . --max-warnings 0",
+        "check-types": "tsc --noEmit --pretty"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Run bun install">
+    ```bash
+    bun install
+    ```
+
+    Bun automatically picks up the new workspace member from the root `workspaces` glob (`apps/*`).
+  </Step>
+</Steps>

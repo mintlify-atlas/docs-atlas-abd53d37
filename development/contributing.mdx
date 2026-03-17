@@ -1,0 +1,194 @@
+---
+title: "Contributing"
+description: "How to contribute code, report issues, and engage with the Audora community."
+---
+
+Contributions are welcome and appreciated. This page explains the workflow, code standards, and conventions used in the Audora project.
+
+<Note>
+  Audora uses **Bun** as its package manager. All commands in this guide use `bun`. Do not substitute `npm`, `yarn`, or `pnpm` — they will not respect the Bun lockfile and may break the workspace.
+</Note>
+
+---
+
+## Development workflow
+
+<Steps>
+  <Step title="Fork the repository">
+    Click **Fork** on the [Audora GitHub repository](https://github.com/narsibhati-dev/audora) to create your own copy.
+  </Step>
+
+  <Step title="Clone your fork">
+    ```bash
+    git clone https://github.com/<your-username>/audora.git
+    cd audora
+    ```
+  </Step>
+
+  <Step title="Create a feature branch">
+    Always branch off `main`. Give the branch a short, descriptive name:
+
+    ```bash
+    git checkout -b feat/my-new-feature
+    # or for a bug fix:
+    git checkout -b fix/issue-description
+    ```
+  </Step>
+
+  <Step title="Set up the development environment">
+    Follow the [Local development setup](/development/local-setup) guide to install dependencies, configure environment variables, and start the database.
+  </Step>
+
+  <Step title="Make your changes">
+    Write your code, keeping the [code style](#code-style) guidelines below in mind. Add or update tests where applicable.
+  </Step>
+
+  <Step title="Run quality checks">
+    Before opening a pull request, make sure all checks pass:
+
+    ```bash
+    # Lint all packages
+    bun run lint
+
+    # Type-check all packages
+    bun run check-types
+
+    # Format all files
+    bun run format
+    ```
+  </Step>
+
+  <Step title="Open a pull request">
+    Push your branch to your fork and open a PR against `main` on the upstream repository. Fill in the PR template and describe what changed and why.
+
+    ```bash
+    git push origin feat/my-new-feature
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Branch naming conventions
+
+Use a short prefix that describes the type of change, followed by a slash and a kebab-case description:
+
+| Prefix | When to use |
+|---|---|
+| `feat/` | New feature or capability |
+| `fix/` | Bug fix |
+| `chore/` | Maintenance, dependency updates, CI changes |
+| `docs/` | Documentation-only changes |
+| `refactor/` | Code restructuring without behavior change |
+| `test/` | Adding or updating tests |
+
+**Examples:**
+
+```
+feat/websocket-reconnect
+fix/prisma-migration-drift
+docs/update-local-setup
+refactor/extract-auth-middleware
+```
+
+---
+
+## Commit message conventions
+
+Follow the [Conventional Commits](https://www.conventionalcommits.org) format:
+
+```
+<type>(<scope>): <short summary>
+```
+
+- **type** — one of `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `style`, `perf`
+- **scope** — optional, the affected package or area (e.g. `api`, `frontend`, `database`)
+- **summary** — imperative mood, lowercase, no period at the end
+
+**Examples:**
+
+```
+feat(api): add rate limiting to upload endpoint
+fix(signal): handle disconnection during active recording
+chore: upgrade Turborepo to 2.8.17
+docs(contributing): add branch naming conventions
+```
+
+---
+
+## Code style
+
+### TypeScript
+
+All code is written in **TypeScript** with strict mode enabled. Type assertions (`as`, `!`) should be avoided in favour of proper type narrowing. Shared types belong in `packages/types` (`@audora/types`) and should be validated with [Zod](https://zod.dev) where applicable.
+
+### ESLint
+
+ESLint is configured via `@audora/eslint-config` and enforced with zero allowed warnings:
+
+```bash
+bun run lint
+```
+
+Fix auto-fixable issues by passing `--fix` directly to `eslint`, or run formatting (see below) which resolves many style warnings.
+
+### Prettier
+
+Code formatting is handled by [Prettier](https://prettier.io). The formatter covers `.ts`, `.tsx`, and `.md` files.
+
+```bash
+# Format all files
+bun run format
+```
+
+<Tip>
+  Configure your editor to format on save using the Prettier extension. This keeps diffs clean and avoids formatting-only commits.
+</Tip>
+
+### Type checking
+
+Run TypeScript type checking across all packages without emitting files:
+
+```bash
+bun run check-types
+```
+
+This runs `tsc --noEmit --pretty` in every app and package via Turborepo, so upstream type errors in shared packages are surfaced immediately.
+
+---
+
+## Running quality checks
+
+| Check | Command | What it does |
+|---|---|---|
+| Lint | `bun run lint` | Runs ESLint across all apps and packages |
+| Type check | `bun run check-types` | Runs `tsc --noEmit` across all apps and packages |
+| Format | `bun run format` | Formats `.ts`, `.tsx`, `.md` files with Prettier |
+
+All three commands use Turborepo to run in dependency order and take advantage of the build cache. Run them from the **repository root**.
+
+---
+
+## Code of Conduct
+
+All contributors are expected to follow the Audora [Code of Conduct](https://github.com/narsibhati-dev/audora/blob/main/CODE_OF_CONDUCT.md). Here is a summary of the key points:
+
+**We value:**
+- Inclusivity — everyone is welcome regardless of background or experience
+- Respect — treat all community members with dignity
+- Collaboration — share knowledge and give credit
+- Constructive feedback — focus on solutions, be patient with newcomers
+
+**Unacceptable behavior includes:**
+- Harassment, discrimination, or offensive comments
+- Unwelcome personal attention or threats
+- Trolling, insults, or derogatory remarks
+- Publishing others' private information without permission
+
+**Reporting:** Contact the maintainers at `narsibahti2000@gmail.com` with as much detail as possible.
+
+Violations may result in a warning, temporary suspension, or permanent removal from the project.
+
+<Warning>
+  This Code of Conduct applies to all project spaces: GitHub, Discord, social media, and any project-related events or communications.
+</Warning>

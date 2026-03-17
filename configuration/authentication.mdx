@@ -1,0 +1,179 @@
+---
+title: "Authentication"
+description: "How Audora handles user authentication on the frontend and backend, including credentials auth, Google OAuth, and meeting tokens."
+---
+
+Audora uses a **dual-layer authentication** system:
+
+- **NextAuth.js** handles session management and OAuth on the Next.js frontend.
+- **JWT middleware** on the Express API server and the Signal server independently verifies tokens using the shared `NEXTAUTH_SECRET`.
+
+All tokens — whether issued by NextAuth for sessions, by the API for REST requests, or for WebSocket meetings — are signed with the same `NEXTAUTH_SECRET`. This eliminates the need for a separate token exchange between services.
+
+## Credentials authentication
+
+Users can register and sign in with an email address and password.
+
+- Passwords are hashed with **bcrypt** before storage. The `password` field on the `User` model is `null` for OAuth users.
+- On login, the API verifies the submitted password against the stored hash and returns a signed JWT if it matches.
+- The API applies a rate limiter to auth endpoints: **5 attempts per 15 minutes** per IP address. Successful requests do not count toward the limit.
+
+### Auth endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/register` | Create a new account with `name`, `email`, and `password`. Also creates a default studio for the user. |
+| `POST` | `/api/auth/login` | Sign in with `email` and `password`. Returns a JWT `accessToken` and the user's `studioSlug`. |
+| `POST` | `/api/auth/google` | Register or sign in with a Google account. Accepts `email` and `name` from the Google profile. |
+
+#### `POST /api/auth/register`
+
+```json
+// Request body
+{
+  "name": "Ada Lovelace",
+  "email": "ada@example.com",
+  "password": "supersecret"
+}
+```
+
+```json
+// 201 Created
+{
+  "success": true,
+  "message": "User created successfully",
+  "user": { "id": "...", "name": "Ada Lovelace", "email": "ada@example.com", "..." },
+  "studio": { "studioSlug": "ada-lovelace-s-studio", "..." }
+}
+```
+
+#### `POST /api/auth/login`
+
+```json
+// Request body
+{
+  "email": "ada@example.com",
+  "password": "supersecret"
+}
+```
+
+```json
+// 200 OK
+{
+  "success": true,
+  "message": "Login successful",
+  "user": { "id": "...", "..." },
+  "studioSlug": "ada-lovelace-s-studio",
+  "accessToken": "<jwt>"
+}
+```
+
+#### `POST /api/auth/google`
+
+```json
+// Request body (forwarded from NextAuth Google callback)
+{
+  "email": "ada@example.com",
+  "name": "Ada Lovelace"
+}
+```
+
+## API token verification
+
+Protected API routes require a **Bearer token** in the `Authorization` header:
+
+```http
+Authorization: Bearer <accessToken>
+```
+
+The `auth` middleware (`apps/audora-api/src/middleware/auth.ts`) extracts the token, verifies it with `NEXTAUTH_SECRET`, and attaches `req.auth.id` (the user's ID) for use by route handlers. A `401 Unauthorized` response is returned if the token is absent, malformed, or expired.
+
+Tokens issued by the API are valid for **1 day**.
+
+## Google OAuth
+
+Google OAuth is implemented in NextAuth.js using the built-in Google provider. After a successful Google sign-in, NextAuth calls `POST /api/auth/google` on the API server to create or retrieve the user record.
+
+<Note>
+  If a user attempts to sign in with Google using an email that is already registered with a password, the API rejects the request. Each email address is tied to exactly one provider.
+</Note>
+
+### Google Cloud Console setup
+
+<Steps>
+  <Step title="Create a project">
+    Go to [Google Cloud Console](https://console.cloud.google.com) and create a new project, or select an existing one.
+  </Step>
+  <Step title="Enable the Google+ API">
+    Navigate to **APIs & Services → Library** and enable the **Google+ API** (or the **People API** if prompted).
+  </Step>
+  <Step title="Create OAuth credentials">
+    Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
+
+    - Application type: **Web application**
+    - Name: `Audora` (or any label)
+  </Step>
+  <Step title="Add the redirect URI">
+    Under **Authorized redirect URIs**, add:
+
+    ```
+    http://localhost:3000/api/auth/callback/google
+    ```
+
+    For production, also add your public domain:
+
+    ```
+    https://yourdomain.com/api/auth/callback/google
+    ```
+  </Step>
+  <Step title="Copy credentials to .env">
+    Copy the **Client ID** and **Client Secret** from the credentials page into your `.env` file:
+
+    ```bash
+    GOOGLE_CLIENT_ID=123456789-abc.apps.googleusercontent.com
+    GOOGLE_CLIENT_SECRET=GOCSPX-…
+    ```
+  </Step>
+</Steps>
+
+## Meeting tokens
+
+When a user joins a studio meeting, the API issues a short-lived **meeting token** — a JWT that authorizes a WebSocket connection to the Signal server.
+
+Meeting tokens are signed with `NEXTAUTH_SECRET` and expire after **1 hour**.
+
+### Token payload
+
+```typescript
+interface MeetingTokenPayload {
+  studioId:        string;               // Studio UUID
+  studioSlug:      string;               // Studio URL slug
+  roomId:          string;               // Unique room identifier for this session
+  userId:          string;               // User UUID
+  participantId:   string;               // Unique participant identifier
+  participantRole: "host" | "guest";     // Access level in the meeting
+  recordable:      boolean;              // Whether this participant's stream can be recorded
+}
+```
+
+### Signal server verification
+
+When the browser opens a WebSocket connection to the Signal server, it sends the meeting token. The Signal server verifies the token using `verifyMeetingToken` (`apps/audora-signal/src/services/verifyToken.ts`) and extracts the payload to determine the participant's identity and role.
+
+```typescript
+import jwt from "jsonwebtoken";
+
+export const verifyMeetingToken = (token: string): MeetingTokenPayload | null => {
+  try {
+    return jwt.verify(token, NEXTAUTH_SECRET) as MeetingTokenPayload;
+  } catch {
+    return null;
+  }
+};
+```
+
+If verification fails, the WebSocket connection is rejected.
+
+<Tip>
+  The `participantRole` field in the meeting token is the authoritative source of truth for host vs. guest permissions inside the Signal server. It is embedded at token issuance time and cannot be modified by the client.
+</Tip>

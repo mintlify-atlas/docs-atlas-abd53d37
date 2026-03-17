@@ -1,0 +1,328 @@
+---
+title: 'Project endpoints'
+description: 'Create, read, update, and delete projects within a studio.'
+---
+
+All project endpoints require a valid Bearer token. See [Authentication](/api-reference/authentication).
+
+Projects belong to a studio and act as containers for tracks and recordings.
+
+---
+
+## Create project
+
+`POST /project/create`
+
+Creates a new project inside a studio.
+
+<ParamField path="body.title" type="string" required>
+  The title of the project.
+</ParamField>
+
+<ParamField path="body.studioId" type="string" required>
+  The ID of the studio this project belongs to.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Project created successfully"`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">Unique project ID (UUID).</ResponseField>
+    <ResponseField name="title" type="string">Project title.</ResponseField>
+    <ResponseField name="studioId" type="string">ID of the owning studio.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST http://localhost:9000/project/create \
+      -H "Authorization: Bearer <token>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "title": "Episode 12",
+        "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Project created successfully",
+      "data": {
+        "id": "proj-uuid-1234",
+        "title": "Episode 12",
+        "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "createdAt": "2024-01-15T11:00:00.000Z"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Title and studioId are required"` | Missing required fields |
+| `500` | `"Failed to create project"` | Unexpected server error |
+
+---
+
+## Update project
+
+`PUT /project/update/:projectId`
+
+Updates the title of an existing project.
+
+**URL parameters**
+
+<ParamField path="path.projectId" type="string" required>
+  The ID of the project to update.
+</ParamField>
+
+**Body**
+
+<ParamField path="body.title" type="string" required>
+  The new project title.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Project updated successfully"`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The updated project object.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X PUT http://localhost:9000/project/update/proj-uuid-1234 \
+      -H "Authorization: Bearer <token>" \
+      -H "Content-Type: application/json" \
+      -d '{"title": "Episode 12 (Final)"}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Project updated successfully",
+      "data": {
+        "id": "proj-uuid-1234",
+        "title": "Episode 12 (Final)",
+        "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "createdAt": "2024-01-15T11:00:00.000Z"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Project ID and title are required"` | Missing `projectId` or `title` |
+| `500` | `"Failed to update project"` | Unexpected server error |
+
+---
+
+## Delete project
+
+`DELETE /project/delete/:projectId`
+
+Deletes a project and all its associated tracks and recordings.
+
+**URL parameters**
+
+<ParamField path="path.projectId" type="string" required>
+  The ID of the project to delete.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Project deleted successfully"`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The deleted project object.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X DELETE http://localhost:9000/project/delete/proj-uuid-1234 \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Project deleted successfully",
+      "data": {
+        "id": "proj-uuid-1234",
+        "title": "Episode 12",
+        "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "createdAt": "2024-01-15T11:00:00.000Z"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Project ID is required"` | Missing `projectId` in URL |
+| `500` | `"Failed to delete project"` | Unexpected server error |
+
+---
+
+## Get project
+
+`GET /project/get/:projectId`
+
+Fetches a single project by its ID.
+
+**URL parameters**
+
+<ParamField path="path.projectId" type="string" required>
+  The ID of the project to fetch.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Project fetched successfully"`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">Unique project ID (UUID).</ResponseField>
+    <ResponseField name="title" type="string">Project title.</ResponseField>
+    <ResponseField name="studioId" type="string">ID of the owning studio.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET http://localhost:9000/project/get/proj-uuid-1234 \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Project fetched successfully",
+      "data": {
+        "id": "proj-uuid-1234",
+        "title": "Episode 12",
+        "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "createdAt": "2024-01-15T11:00:00.000Z"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Project ID is required"` | Missing `projectId` in URL |
+| `500` | `"Failed to get project"` | Unexpected server error |
+
+---
+
+## List projects
+
+`GET /project/get-all/:studioId`
+
+Returns a paginated list of projects for a studio, identified by its slug.
+
+**URL parameters**
+
+<ParamField path="path.studioId" type="string" required>
+  This path segment is present in the URL but projects are actually looked up by `studioSlug` query parameter (see below).
+</ParamField>
+
+**Query parameters**
+
+<ParamField path="query.studioSlug" type="string" required>
+  The URL slug of the studio whose projects to list.
+</ParamField>
+
+<ParamField path="query.page" type="number" required>
+  Page number for pagination. Starts at `1`.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Projects fetched successfully"`
+</ResponseField>
+
+<ResponseField name="data" type="object[]">
+  Array of project objects. Each object has `id`, `title`, `studioId`, and `createdAt`.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET \
+      "http://localhost:9000/project/get-all/a1b2c3d4?studioSlug=jane-smith-s-studio&page=1" \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Projects fetched successfully",
+      "data": [
+        {
+          "id": "proj-uuid-1234",
+          "title": "Episode 12",
+          "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "createdAt": "2024-01-15T11:00:00.000Z"
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Studio slug and page are required"` | Missing `studioSlug` or `page` query params |
+| `404` | `"Studio not found"` | No studio matches the given `studioSlug` |
+| `404` | `"Projects not found"` | No projects exist for this studio |
+| `500` | `"Failed to get projects"` | Unexpected server error |

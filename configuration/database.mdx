@@ -1,0 +1,262 @@
+---
+title: "Database configuration"
+description: "How Audora uses Prisma and PostgreSQL, including the full schema, enums, and migration commands."
+---
+
+Audora uses **PostgreSQL** as its primary database and **Prisma** as the ORM. The database package lives at `packages/database` and is shared across services as `@audora/database`.
+
+<Note>
+  The recommended way to run PostgreSQL locally is via Docker Compose. The `db:up` command starts only the database container so you can run migrations and the application against it.
+</Note>
+
+## Connection string
+
+Set `DATABASE_URL` in your `.env` file using the standard PostgreSQL connection string format:
+
+```
+postgresql://<user>:<password>@<host>:<port>/<database>
+```
+
+```bash
+# .env
+DATABASE_URL=postgresql://audora_user:change_me_to_a_secure_password@database:5432/audora
+```
+
+The `POSTGRES_PASSWORD` variable must match the password embedded in `DATABASE_URL`. Both are used by the Docker Compose service to initialise the database user.
+
+## Starting the database
+
+```bash
+# Start only the database container
+bun run db:up
+
+# Stop the database container
+bun run db:down
+```
+
+These commands map to `docker compose up -d database` and `docker compose down database` respectively.
+
+## Migration commands
+
+All database commands are available from the repository root using Bun workspaces and Turborepo.
+
+| Command | Description |
+|---|---|
+| `bun run db:up` | Start the PostgreSQL Docker container. |
+| `bun run db:down` | Stop the PostgreSQL Docker container. |
+| `bun run db:migrate` | Create and apply a new migration in development (`prisma migrate dev`). |
+| `bun run db:deploy` | Apply pending migrations in production (`prisma migrate deploy`) and regenerate the client. |
+| `bun run db:generate` | Regenerate the Prisma client from the current schema without running migrations. |
+| `bun run db:reset` | Drop the database, re-apply all migrations, and re-run the seed (`prisma migrate reset`). |
+| `bun run db:seed` | Run the seed script at `packages/database/prisma/seed.ts`. |
+| `bun run db:studio` | Open Prisma Studio — a visual editor for the database — at `http://localhost:5555`. |
+
+<Warning>
+  `db:reset` drops all data. Only use it in development environments.
+</Warning>
+
+## Schema
+
+The full Prisma schema is located at `packages/database/prisma/schema.prisma`.
+
+### Models
+
+#### `User`
+
+Represents a registered account. A user has at most one studio.
+
+```prisma
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String?               // null for OAuth users
+  image     String?
+  provider  String   @default("credentials")  // "credentials" | "google"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studio Studio? @relation("UserStudio")
+
+  @@index([id])
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` (UUID) | Primary key. |
+| `name` | `String` | Display name. |
+| `email` | `String` | Unique email address. |
+| `password` | `String?` | bcrypt-hashed password. `null` for Google OAuth users. |
+| `image` | `String?` | Avatar URL. Populated from Google profile for OAuth users. |
+| `provider` | `String` | Authentication provider: `credentials` or `google`. |
+| `createdAt` | `DateTime` | Record creation timestamp. |
+| `updatedAt` | `DateTime` | Last update timestamp. |
+
+#### `Studio`
+
+Each user owns a single studio that holds recording settings and projects.
+
+```prisma
+model Studio {
+  id         String @id @default(uuid())
+  studioSlug String @unique
+  studioName String
+  token      String @unique @default(cuid())
+
+  // settings
+  enableLobby              Boolean         @default(false)
+  enableCaptions           Boolean         @default(false)
+  recordingType            RecordingType   @default(VIDEO_AUDIO)
+  audioSampleRate          AudioSampleRate @default(KHZ_44_1)
+  videoQuality             VideoQuality    @default(STANDARD)
+  countdownBeforeRecording Boolean         @default(false)
+  autoStartOnGuestJoin     Boolean         @default(false)
+  noiseReduction           Boolean         @default(false)
+  pauseUploads             Boolean         @default(false)
+  language                 String          @default("English")
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+
+  userId   String    @unique
+  user     User      @relation("UserStudio", fields: [userId], references: [id], onDelete: Cascade)
+  projects Project[] @relation("StudioProject")
+
+  @@index([id, userId, studioSlug])
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `studioSlug` | `String` | URL-safe unique identifier for the studio. Used in meeting room URLs. |
+| `studioName` | `String` | Human-readable name. Auto-generated from the user's name on registration. |
+| `token` | `String` | CUID used for invite links. |
+| `enableLobby` | `Boolean` | Hold guests in a waiting room before admitting them. |
+| `enableCaptions` | `Boolean` | Enable live captions during recording. |
+| `recordingType` | `RecordingType` | Whether to capture video+audio or audio only. |
+| `audioSampleRate` | `AudioSampleRate` | Audio quality: 44.1 kHz or 48 kHz. |
+| `videoQuality` | `VideoQuality` | Video quality preset. |
+| `countdownBeforeRecording` | `Boolean` | Show a countdown before recording starts. |
+| `autoStartOnGuestJoin` | `Boolean` | Automatically begin recording when a guest joins. |
+| `noiseReduction` | `Boolean` | Apply noise reduction to audio. |
+| `pauseUploads` | `Boolean` | Pause upload of recording chunks. |
+| `language` | `String` | Language for captions. |
+
+#### `Project`
+
+A project groups one or more tracks recorded in the same session.
+
+```prisma
+model Project {
+  id        String   @id @default(uuid())
+  title     String
+  studioId  String
+  createdAt DateTime @default(now())
+
+  studio Studio  @relation("StudioProject", fields: [studioId], references: [id], onDelete: Cascade)
+  tracks Track[] @relation("ProjectTrack")
+
+  @@index([id, studioId])
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `String` (UUID) | Primary key. |
+| `title` | `String` | Project display name. |
+| `studioId` | `String` | Foreign key to the owning studio. Cascade-deletes when the studio is deleted. |
+
+#### `Track`
+
+A track holds the raw and merged recordings for one participant in a project.
+
+```prisma
+model Track {
+  id             String   @id @default(uuid())
+  name           String?
+  projectId      String
+  mergedVideoUrl String?
+  createdAt      DateTime @default(now())
+
+  project    Project     @relation("ProjectTrack", fields: [projectId], references: [id])
+  recordings Recording[] @relation("RecordingTrack")
+
+  @@index([id, projectId])
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `String?` | Optional display name for the track. |
+| `mergedVideoUrl` | `String?` | URL of the final merged output after the recording pipeline completes. |
+
+#### `Recording`
+
+An individual recording segment uploaded by a participant.
+
+```prisma
+model Recording {
+  id           String          @id @default(uuid())
+  trackId      String
+  displayName  String
+  videoUrl     String?
+  duration     Int?
+  resolution   String?         @default("1280x720")
+  thumbnailUrl String?         @default("https://via.placeholder.com/150")
+  status       RecordingStatus @default(RECORDING)
+  createdAt    DateTime        @default(now())
+
+  track Track @relation("RecordingTrack", fields: [trackId], references: [id])
+
+  @@index([id, trackId])
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `displayName` | `String` | Participant display name at recording time. |
+| `videoUrl` | `String?` | URL of the stored video/audio file. |
+| `duration` | `Int?` | Duration in seconds. |
+| `resolution` | `String?` | Video resolution, e.g. `1280x720`. |
+| `thumbnailUrl` | `String?` | Preview image URL. |
+| `status` | `RecordingStatus` | Lifecycle status of the recording. |
+
+### Enums
+
+#### `RecordingType`
+
+Controls which media streams are captured.
+
+| Value | Description |
+|---|---|
+| `VIDEO_AUDIO` | Capture both video and audio tracks. *(default)* |
+| `AUDIO_ONLY` | Capture audio only; no video stream is recorded. |
+
+#### `AudioSampleRate`
+
+Sets the audio sample rate for recordings.
+
+| Value | Description |
+|---|---|
+| `KHZ_44_1` | 44.1 kHz — standard CD-quality audio. *(default)* |
+| `KHZ_48` | 48 kHz — broadcast-quality audio. |
+
+#### `VideoQuality`
+
+Sets the video quality preset applied during capture.
+
+| Value | Description |
+|---|---|
+| `STANDARD` | Standard definition preset suitable for most use cases. *(default)* |
+| `ADVANCED` | Higher quality preset for improved clarity. |
+
+#### `RecordingStatus`
+
+Tracks the processing lifecycle of a recording.
+
+| Value | Description |
+|---|---|
+| `RECORDING` | Capture is in progress or chunks are being uploaded. *(default)* |
+| `MERGING` | The recording pipeline is processing and merging chunks. |
+| `COMPLETED` | Processing is finished and the final file is available. |
+| `FAILED` | Processing failed. Manual intervention may be required. |

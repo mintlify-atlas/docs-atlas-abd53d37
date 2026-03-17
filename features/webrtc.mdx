@@ -1,0 +1,215 @@
+---
+title: "WebRTC & real-time communication"
+description: "Peer-to-peer media streaming and signaling via the Audora signal server"
+---
+
+Audora uses **WebRTC** for real-time audio and video between participants. Each participant establishes a direct peer-to-peer connection with every other participant in the room. The signal server (`audora-signal`) handles the out-of-band signaling needed to negotiate these connections, but does not carry any media itself.
+
+## Architecture overview
+
+```
+Participant A ←──── WebRTC (P2P) ────→ Participant B
+      │                                       │
+      └──── WebSocket ──→ Signal Server ←─────┘
+                          (audora-signal)
+```
+
+The signal server:
+- Authenticates every connection using a JWT meeting token
+- Manages in-memory rooms keyed by `studioSlug`
+- Forwards WebRTC signaling messages between participants
+- Broadcasts mic/camera state change events to the room
+
+## Meeting token authentication
+
+Every WebSocket connection must carry a JWT token as a query parameter:
+
+```
+wss://signal.example.com?token=<meeting-jwt>
+```
+
+On connection the server extracts and verifies the token:
+
+```typescript
+// services/verifyToken.ts
+export interface MeetingTokenPayload {
+  studioId: string;
+  studioSlug: string;      // used as the room identifier
+  roomId: string;
+  userId: string;
+  participantId: string;
+  participantRole: "host" | "guest";
+  recordable: boolean;
+}
+
+export const verifyMeetingToken = (token: string): MeetingTokenPayload | null => {
+  try {
+    return jwt.verify(token, NEXTAUTH_SECRET) as MeetingTokenPayload;
+  } catch {
+    return null;
+  }
+};
+```
+
+If verification fails the socket is closed immediately without any message being dispatched.
+
+## Room model
+
+Rooms are stored in an in-memory `Map` on the signal server. The room ID is the `studioSlug` from the JWT payload.
+
+```typescript
+export interface Room {
+  roomId: string;          // studioSlug
+  projectId?: string | null;
+  trackId?: string | null;
+  recordingStatus?: boolean;
+  participants: Participant[];
+}
+
+export interface Participant {
+  userId: string;
+  name: string;
+  role: 'host' | 'guest'; // only 1 host and up to 2 guests allowed
+  micOn: boolean;
+  camOn: boolean;
+  socketId: string;        // UUID assigned on join
+  socket: WebSocket;
+}
+```
+
+<Note>
+Each room allows exactly one host and up to two guests. The signal server enforces these limits in `addToRoom`.
+</Note>
+
+## WebSocket message types
+
+All messages are JSON with a `type` string and a `data` object. The server routes messages to one of three handlers:
+
+### Room lifecycle messages
+
+| Type | Direction | Description |
+|---|---|---|
+| `user:join` | Client → Server | Join the room with name, micOn, camOn state |
+| `user:joined` | Server → Clients | Broadcast when a new participant joins |
+| `user:leave` | Client → Server | Leave the room gracefully |
+| `user:left` | Server → Clients | Broadcast when a participant disconnects |
+| `meeting:end` | Client → Server | Host-only; tears down the room |
+| `room:ready` | Server → Client | Sent to the joining client with selfSocketId and room state |
+| `participants:list` | Server → Client | List of existing participants sent on join |
+
+### WebRTC signaling messages
+
+These messages are forwarded verbatim to the target participant identified by the `to` field:
+
+| Type | Description |
+|---|---|
+| `webrtc:offer` | SDP offer from the initiating peer |
+| `webrtc:answer` | SDP answer from the receiving peer |
+| `webrtc:ice-candidate` | ICE candidate exchange |
+
+The `webRTCHandler` looks up the target socket by `socketId` and forwards the message with the sender's `from` field attached:
+
+```typescript
+// handlers/webRTCHandler.ts
+sendToSocket(target.socket, {
+  type,
+  data: {
+    ...data,
+    from: fromSocketId,
+  },
+});
+```
+
+### Meeting state messages
+
+| Type | Direction | Description |
+|---|---|---|
+| `mic:toggle` | Client → Server | Broadcast mic state change to all other participants |
+| `cam:toggle` | Client → Server | Broadcast camera state change to all other participants |
+| `project-id` | Client → Server | Associate a project ID with the room |
+| `track-id` | Client → Server | Associate a track ID with the room |
+| `recording:start` | Client → Server | Update and broadcast recording status |
+| `recording:stop` | Client → Server | Update and broadcast recording status |
+
+## Connection flow
+
+<Steps>
+  <Step title="Obtain a meeting token">
+    The frontend requests a short-lived JWT from the API before entering the studio. The token encodes `studioSlug`, `userId`, `participantRole`, and `recordable`.
+  </Step>
+
+  <Step title="Open the WebSocket connection">
+    `useSignaling` opens a WebSocket to the signal server URL with the token as a query parameter. It implements a singleton pattern so only one connection exists per room even if the component tree re-renders.
+
+    ```typescript
+    const wsURL = `${SIGNALING_URL}?token=${encodeURIComponent(token)}`;
+    const socket = new WebSocket(wsURL);
+    ```
+  </Step>
+
+  <Step title="Join the room">
+    On `socket.onopen`, the client sends a `user:join` message containing the participant's display name and initial mic/camera state. The server adds them to the in-memory room and broadcasts `user:joined` to all existing participants.
+  </Step>
+
+  <Step title="Receive existing participants">
+    The server sends `room:ready` to the joining client (with `selfSocketId` and any existing `projectId`/`trackId`), followed by a `participants:list` message if others are already in the room.
+  </Step>
+
+  <Step title="Exchange WebRTC offers and answers">
+    For each existing participant, the new joiner initiates a WebRTC offer. The signal server forwards `webrtc:offer` to the target, who responds with `webrtc:answer`. Both sides then exchange `webrtc:ice-candidate` messages until a media path is established.
+  </Step>
+
+  <Step title="Stream media">
+    Once the peer connection is established, audio and video tracks flow directly between peers without passing through the signal server.
+  </Step>
+
+  <Step title="Broadcast device state changes">
+    When a participant toggles their microphone or camera, they send a `mic:toggle` or `cam:toggle` message. The signal server broadcasts these to all other room members, which the frontend uses to update participant UI state via `useMeetingParticipantStore.updateParticipantStatus`.
+  </Step>
+
+  <Step title="Leave or end the meeting">
+    A participant sends `user:leave` when navigating away. The socket `close` event also triggers automatic leave logic. If the host sends `meeting:end`, the signal server broadcasts the event to all participants.
+  </Step>
+</Steps>
+
+## Client-side state
+
+Two Zustand stores manage WebRTC state on the frontend:
+
+**`useSignalStore`** — holds the active `WebSocket` instance and the `sendMessage` helper:
+
+```typescript
+interface SignalStore {
+  socket: WebSocket | null;
+  sendMessage: (message: Message) => void;
+  isReady: boolean;
+}
+```
+
+**`useMeetingParticipantStore`** — tracks self and all remote participants:
+
+```typescript
+export interface MeetingParticipant {
+  id: string;         // userId
+  socketId: string;
+  name: string;
+  stream: MediaStream | null;
+  isSpeaker: boolean;
+  isMuted: boolean;
+  isCameraOn: boolean;
+  isMicOn: boolean;
+}
+```
+
+## Reconnection
+
+`useSignaling` automatically retries on unexpected disconnections (close code `1006`) using exponential backoff, up to three attempts:
+
+```typescript
+const delay = Math.min(1000 * Math.pow(2, retryCount.current - 1), 10000);
+retryTimeoutRef.current = setTimeout(connectWebSocket, delay);
+```
+
+<Tip>
+Existing connections to the same `studioSlug` are reused instead of creating duplicate sockets, so navigation within the studio page does not cause unnecessary reconnects.
+</Tip>

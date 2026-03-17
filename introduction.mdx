@@ -1,0 +1,88 @@
+---
+title: "Introduction"
+description: "Audora is a full-stack podcast recording platform built on WebRTC, real-time WebSocket signaling, and S3 media uploads."
+---
+
+Audora is an open-source, self-hostable podcast recording platform. It gives hosts and guests a browser-based studio where audio and video are captured locally, uploaded in chunks to S3, and processed server-side — so a dropped connection never ruins a take.
+
+The platform is built as a Turborepo monorepo with three independent services that communicate over HTTP and WebSocket, backed by a shared PostgreSQL database.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run Audora locally in under ten minutes.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand the three-service design and data model.
+  </Card>
+  <Card title="Features" icon="star" href="/features/recording">
+    Explore recording modes, studio settings, and upload options.
+  </Card>
+  <Card title="API reference" icon="code" href="/api-reference/overview">
+    Browse the REST endpoints exposed by audora-api.
+  </Card>
+</CardGroup>
+
+## Services
+
+Audora is composed of three runnable applications, each in its own `apps/` directory.
+
+### audora-frontend
+
+A [Next.js 16](https://nextjs.org) application (React 19, Tailwind CSS 4) that provides the host dashboard, guest studio, project management UI, and authentication via NextAuth.js with Google OAuth. It runs on **port 3000** in development.
+
+State is managed with [Zustand](https://github.com/pmndrs/zustand) and server data is fetched through [TanStack Query](https://tanstack.com/query). WebRTC peer connections and the WebSocket signaling channel are both initiated from the browser.
+
+### audora-api
+
+An [Express 5](https://expressjs.com) REST API that runs on **Bun** on **port 9000**. It owns the application's HTTP surface: authentication, profile management, studio configuration, project and track CRUD, meeting tokens, and recording metadata.
+
+Route groups registered in `server.ts`:
+
+| Prefix | Responsibility |
+|---|---|
+| `/auth` | Sign-up, sign-in, session management |
+| `/profile` | User profile reads and updates |
+| `/studio` | Studio creation and settings |
+| `/meeting` | Meeting token issuance |
+| `/project` | Project CRUD |
+| `/track` | Track CRUD |
+| `/recording` | Recording metadata and chunked-upload coordination |
+
+### audora-signal
+
+A lightweight [ws](https://github.com/websockets/ws) WebSocket server that runs on **Bun** on **port 8000**. It handles all real-time room and WebRTC signaling events: participant join/leave, offer/answer/ICE-candidate relay, mic/camera toggles, and recording lifecycle messages.
+
+Every inbound connection must present a valid JWT token in the WebSocket URL. A separate HTTP health-check server listens on **port 8001** at `/health`.
+
+## Shared packages
+
+The `packages/` workspace contains modules shared across all three services.
+
+| Package | Contents |
+|---|---|
+| `@audora/database` | Prisma client generated from `schema.prisma`, PostgreSQL migrations |
+| `@audora/types` | Shared TypeScript types for WebSocket messages and domain models |
+| `@audora/typescript-config` | Base `tsconfig.json` extended by every app |
+| `@audora/eslint-config` | Shared ESLint rules |
+
+## Key capabilities
+
+- **WebRTC recording** — peer-to-peer audio/video capture with local track isolation, ensuring each participant's media is recorded independently.
+- **Chunked S3 uploads** — multipart uploads with automatic retry and resume so recordings survive network interruptions.
+- **Room management** — JWT-authenticated WebSocket rooms with host-controlled participant lifecycle.
+- **Studio settings** — per-studio configuration for recording type (`VIDEO_AUDIO` / `AUDIO_ONLY`), audio sample rate (44.1 kHz / 48 kHz), video quality, noise reduction, lobby gating, and countdown before recording.
+- **Project and track model** — recordings are organised into Projects → Tracks → Recordings, allowing multi-participant sessions to be stored and merged per-track.
+
+## Tech stack
+
+| Category | Technology |
+|---|---|
+| Monorepo | Turborepo |
+| Runtime | Bun |
+| Frontend | Next.js 16 |
+| Backend | Express 5 |
+| Real-time | WebRTC, WebSocket (`ws`) |
+| Database | PostgreSQL 16, Prisma |
+| Storage | AWS S3 |
+| Media | FFmpeg |
+| DevOps | Docker, GitHub Actions |

@@ -1,0 +1,235 @@
+---
+title: "CI/CD pipelines"
+description: "GitHub Actions workflows that build, push, and deploy each Audora service"
+---
+
+Audora uses three GitHub Actions workflows — one per application service — to automate Docker image builds and deployments to a remote VM. All workflows are triggered by pushes to the `production` branch and use path filters so only the affected service is rebuilt.
+
+## Workflow overview
+
+| Workflow file | Service | Trigger paths |
+|---|---|---|
+| `cd_api.yml` | Backend API | `apps/audora-api/**`, `packages/**` |
+| `cd_frontend.yml` | Frontend (Next.js) | `apps/audora-frontend/**`, `packages/**` |
+| `cd_signal.yml` | Signal server | `apps/audora-signal/**`, `packages/**` |
+
+All three also re-run when their own workflow file changes (e.g. `.github/workflows/cd_api.yml`).
+
+## Deployment strategy
+
+The workflows follow a **build → push → pull → run** pattern:
+
+1. Check out the repository on `ubuntu-latest`
+2. Authenticate with Docker Hub
+3. Build the production Docker image and push it with two tags: `latest` and the commit SHA
+4. SSH into the production VM, pull the new image, stop/remove the old container, and start a fresh one
+
+This gives you a rollback path: any previous commit SHA tag is preserved in Docker Hub.
+
+## `cd_api.yml` — Backend API
+
+```yaml
+name: Audora API
+
+on:
+  push:
+    branches: [production]
+    paths:
+      - "apps/audora-api/**"
+      - "packages/**"
+      - ".github/workflows/cd_api.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/backend.prod.Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/audora-api:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/audora-api:latest
+      - uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/audora-api:latest
+            # stop & remove existing container if running
+            sudo docker run -d \
+              --name audora-api \
+              -e NODE_ENV=production \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              -e FRONTEND_URL="${{ secrets.FRONTEND_URL }}" \
+              -e PORT=9000 \
+              -e NEXTAUTH_SECRET="${{ secrets.NEXTAUTH_SECRET }}" \
+              -p 9000:9000 \
+              --restart always \
+              ${{ secrets.DOCKERHUB_USERNAME }}/audora-api:latest
+```
+
+Environment variables are injected at container start-up via `-e` flags sourced directly from GitHub secrets — no `.env` file is needed on the VM.
+
+## `cd_signal.yml` — Signal server
+
+```yaml
+name: Audora Signal
+
+on:
+  push:
+    branches: [production]
+    paths:
+      - "apps/audora-signal/**"
+      - "packages/**"
+      - ".github/workflows/cd_signal.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/signal.prod.Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/audora-signal:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/audora-signal:latest
+      - uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/audora-signal:latest
+            # stop & remove existing container if running
+            sudo docker run -d \
+              --name audora-signal \
+              -e NODE_ENV=production \
+              -e NEXTAUTH_SECRET="${{ secrets.NEXTAUTH_SECRET }}" \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              -p 8000:8000 \
+              --restart always \
+              ${{ secrets.DOCKERHUB_USERNAME }}/audora-signal:latest
+```
+
+## `cd_frontend.yml` — Frontend
+
+The frontend workflow builds and pushes the Docker image but the VM deployment step is currently commented out. The image is published to Docker Hub and can be deployed manually or via a separate mechanism (e.g. a hosting platform that watches Docker Hub).
+
+```yaml
+name: Audora frontend
+
+on:
+  push:
+    branches: [production]
+    paths:
+      - "apps/audora-frontend/**"
+      - "packages/**"
+      - ".github/workflows/cd_frontend.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/frontend.prod.Dockerfile
+          push: true
+          build-args: |
+            NEXT_PUBLIC_SITE_URL=${{ secrets.NEXT_PUBLIC_SITE_URL }}
+            NEXT_PUBLIC_NEXTAUTH_URL=${{ secrets.NEXT_PUBLIC_NEXTAUTH_URL }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/audora-frontend:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/audora-frontend:latest
+```
+
+<Note>
+  The `NEXT_PUBLIC_SITE_URL` and `NEXT_PUBLIC_HTTP_URL` values are baked into the Next.js build at image build time. If your production URL changes you need to rebuild and redeploy the frontend image.
+</Note>
+
+## Required GitHub secrets
+
+Add these secrets in your repository under **Settings → Secrets and variables → Actions**:
+
+| Secret | Used by | Description |
+|---|---|---|
+| `DOCKERHUB_USERNAME` | all | Your Docker Hub username |
+| `DOCKERHUB_TOKEN` | all | Docker Hub access token (not your password) |
+| `HOST_IP` | api, signal | Public IP address of your production VM |
+| `SSH_PRIVATE_KEY` | api, signal | Private SSH key whose public half is in `~/.ssh/authorized_keys` on the VM |
+| `DATABASE_URL` | api, signal | Production Postgres connection string |
+| `NEXTAUTH_SECRET` | api, signal | NextAuth secret (same value as in your production `.env`) |
+| `FRONTEND_URL` | api | Public URL of the frontend (used for CORS) |
+| `NEXT_PUBLIC_SITE_URL` | frontend | Public URL of the frontend app (baked into the image) |
+| `NEXT_PUBLIC_NEXTAUTH_URL` | frontend | Same as `NEXT_PUBLIC_SITE_URL` for NextAuth |
+
+## Triggering a deployment
+
+<Steps>
+
+### Merge to the `production` branch
+
+Push or merge a pull request into `production`. GitHub Actions picks up the push event and checks the path filters to decide which workflow(s) to run.
+
+```bash
+git checkout production
+git merge main
+git push origin production
+```
+
+### Monitor the workflow run
+
+Go to **Actions** in your GitHub repository and select the relevant workflow. Each run shows logs for every step, including the SSH deployment script output.
+
+### Verify the deployment
+
+Once the workflow completes, hit the health endpoints on your VM:
+
+```bash
+curl http://<HOST_IP>:9000/        # backend
+curl http://<HOST_IP>:8001/health  # signal
+```
+
+</Steps>
+
+## Rolling back
+
+Because every push is also tagged with its commit SHA, you can redeploy a previous version by pulling that specific tag on the VM:
+
+```bash
+sudo docker pull <DOCKERHUB_USERNAME>/audora-api:<previous-sha>
+sudo docker stop audora-api && sudo docker rm audora-api
+sudo docker run -d --name audora-api ... <DOCKERHUB_USERNAME>/audora-api:<previous-sha>
+```
+
+## Image cleanup
+
+Each deployment script ends with:
+
+```bash
+sudo docker image prune -f --filter "until=24h"
+```
+
+This removes dangling images older than 24 hours from the VM, keeping disk usage in check without deleting recently-pulled images.

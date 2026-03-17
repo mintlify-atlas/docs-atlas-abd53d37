@@ -1,0 +1,194 @@
+---
+title: "Chunked uploads"
+description: "How Audora streams recording chunks from the browser to the API in real time"
+---
+
+Audora uploads recording data as a continuous stream of small chunks rather than waiting until recording ends to transfer a single large file. This makes uploads resilient to network interruptions and ensures minimal data loss if a session ends unexpectedly.
+
+## Upload pipeline overview
+
+```
+Browser (MediaRecorder)
+  │
+  ├─ ChunkData (Blob + metadata)
+  │
+  ▼
+useChunkUploadQueue          ← sequential in-memory queue
+  │
+  ├─ FormData (multipart)
+  │
+  ▼
+POST /api/recording/chunks   ← audora-api
+  │
+  ▼
+Kafka topic: recording-chunks ← downstream processing
+```
+
+## The upload queue
+
+`useChunkUploadQueue` is the core hook responsible for serialising uploads. It maintains a `useRef` queue of `ChunkTask` objects and processes them one at a time:
+
+```typescript
+type ChunkTask = {
+  blob: Blob;
+  userId: string;
+  roomId: string;
+  startTime?: number;
+  endTime?: number;
+  projectId: string;
+  isFinal: boolean;
+  trackId?: string;
+};
+```
+
+Each call to `enqueue` appends a task and immediately triggers `processQueue`. A retry interval also runs every 2 seconds in case the queue stalls:
+
+```typescript
+export const useChunkUploadQueue = () => {
+  const queue = useRef<ChunkTask[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const processQueue = async () => {
+    if (isUploading || queue.current.length === 0) return;
+
+    setIsUploading(true);
+    while (queue.current.length > 0) {
+      const task = queue.current.shift();
+      try {
+        if (task) await uploadChunk(task);
+      } catch (err) {
+        console.error('Chunk upload failed, requeueing...', err);
+        queue.current.unshift(task!); // put it back at the front
+        break;
+      }
+    }
+    setIsUploading(false);
+  };
+
+  // retry every 2 seconds
+  useEffect(() => {
+    const interval = setInterval(() => processQueue(), 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return { enqueue, isUploading };
+};
+```
+
+<Note>
+Failed uploads are placed back at the front of the queue and retried on the next tick. This preserves chunk order while handling transient network errors.
+</Note>
+
+## FormData payload
+
+Each chunk is sent as `multipart/form-data` with the following fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `chunk` | `Blob` | Raw audio/video data from the MediaRecorder |
+| `trackId` | `string` | ID of the `Track` this chunk belongs to |
+| `userId` | `string` | ID of the recording participant |
+| `roomId` | `string` | Studio slug used as the room identifier |
+| `projectId` | `string` | ID of the `Project` for this session |
+| `isFinal` | `string` | `"true"` for the last chunk in a recording |
+| `startTime` | `string` | Optional chunk start timestamp (ms) |
+| `endTime` | `string` | Optional chunk end timestamp (ms) |
+
+## API endpoint
+
+The chunk upload endpoint is handled by `recordingController` in `audora-api`:
+
+```typescript
+// controllers/recording.controller.ts
+export const recordingController = (req: Request, res: Response) => {
+  const chunk = req.file;
+
+  if (!chunk) {
+    res.status(400).json({ success: false, message: 'No chunk file provided' });
+    return;
+  }
+
+  res.status(200).json({ success: true, message: 'Chunk uploaded successfully' });
+};
+```
+
+## Kafka integration
+
+After a chunk is accepted by the API, it is forwarded to the `recording-chunks` Kafka topic for downstream processing (merging, transcoding, storage):
+
+```typescript
+// queue/kafkaProducer.ts
+export const kafkaProducer = async (
+  sessionId: string,
+  data: Buffer,
+  isFinal: boolean,
+) => {
+  const producer = new Kafka({
+    clientId: 'audora-api',
+    brokers: ['localhost:9092'],
+  }).producer();
+
+  await producer.connect();
+  await producer.send({
+    topic: 'recording-chunks',
+    messages: [{ value: JSON.stringify({ sessionId, data, isFinal }) }],
+  });
+};
+```
+
+When `isFinal` is `true`, the consumer knows to begin the merge pass and transition the `Recording` status to `MERGING`.
+
+## Upload status lifecycle
+
+The upload architecture defines six distinct states:
+
+| Status | Description |
+|---|---|
+| `idle` | No upload in progress |
+| `uploading` | Actively sending chunks |
+| `paused` | Upload suspended; queue is held |
+| `completed` | All chunks delivered successfully |
+| `error` | A chunk failed all retry attempts |
+| `cancelled` | Upload was explicitly aborted by the user |
+
+## Pause and resume
+
+Uploads can be suspended and resumed at any time. The `pauseUploads` studio setting controls whether uploads are paused by default when a guest joins. Toggling this setting propagates through `useStudioSettingsStore` to the upload queue consumer.
+
+When paused, the queue stops calling `processQueue` even if new chunks arrive. On resume, processing restarts from the head of the queue with no data loss.
+
+## Upload flow
+
+<Steps>
+  <Step title="Recording begins">
+    `useAdvancedRecording` starts capturing. Each `ChunkData` emitted by `onChunkAvailable` is immediately handed to `enqueue`.
+  </Step>
+
+  <Step title="Chunk is enqueued">
+    `enqueue` appends the `ChunkTask` to the in-memory queue and calls `processQueue`. If no upload is already running, processing starts immediately.
+  </Step>
+
+  <Step title="FormData is assembled">
+    The queue worker wraps the chunk `Blob` in a `FormData` object along with `trackId`, `userId`, `roomId`, `projectId`, `isFinal`, and timing fields.
+  </Step>
+
+  <Step title="Chunk is posted to the API">
+    The `uploadChunks` server action sends a `POST` request to the recording endpoint. On success the worker advances to the next queued task.
+  </Step>
+
+  <Step title="Failed chunks are retried">
+    If the request throws, the task is placed back at the front of the queue. The retry interval re-triggers `processQueue` every 2 seconds until the chunk succeeds or the session ends.
+  </Step>
+
+  <Step title="Recording stops">
+    `stopRecording` is called. The final chunk is enqueued with `isFinal: true`. Once the API receives this chunk it publishes to Kafka with `isFinal: true`, signaling the start of the merge phase.
+  </Step>
+
+  <Step title="Kafka consumer merges chunks">
+    The downstream consumer assembles all chunks for the session in order, stitches them into a single file, uploads the result, and updates the `Recording` row: `status → COMPLETED`, `videoUrl` populated.
+  </Step>
+</Steps>
+
+<Warning>
+Closing the browser tab mid-session will interrupt any in-flight uploads. Audora will attempt to flush the queue before the page unloads, but chunks that have not yet been enqueued will be lost.
+</Warning>

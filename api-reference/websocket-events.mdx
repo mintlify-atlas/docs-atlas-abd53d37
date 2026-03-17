@@ -1,0 +1,469 @@
+---
+title: 'WebSocket events'
+description: 'Real-time signaling events for meetings, WebRTC negotiation, and recording control.'
+---
+
+Audora uses a WebSocket signaling server for real-time communication between meeting participants. All WebRTC negotiation, participant state changes, and recording control flow through this server.
+
+**Connection URL**
+
+```
+ws://localhost:8000
+```
+
+Configurable via `NEXT_PUBLIC_SIGNALING_URL`.
+
+## Authentication
+
+Obtain a meeting token from `POST /meeting/generate-token` before connecting. Pass the token as a query parameter or in the connection handshake, as expected by the signaling server.
+
+Once connected, send a `user:join` message to enter a room. The server verifies the token and assigns the socket to the correct studio room.
+
+## Message envelope
+
+All messages — both inbound (client → server) and outbound (server → client) — use the same JSON envelope:
+
+```json
+{
+  "type": "<event-type>",
+  "data": { ... }
+}
+```
+
+<Note>
+  All messages are scoped to a room identified by `studioSlug`. A message sent by one participant is only delivered to other participants in the same studio room. There is no cross-room broadcasting.
+</Note>
+
+---
+
+## Inbound events (client → server)
+
+These are the message types the client sends to the signaling server.
+
+### `user:join`
+
+Join the studio room. Must be sent before any other event. The server adds the participant, assigns a `socketId`, and broadcasts `user:joined` to other participants.
+
+```json
+{
+  "type": "user:join",
+  "data": {
+    "name": "Jane Smith",
+    "micOn": true,
+    "camOn": true
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Display name shown to other participants |
+| `micOn` | boolean | Initial microphone state |
+| `camOn` | boolean | Initial camera state |
+
+---
+
+### `user:leave`
+
+Leave the studio room. The server removes the participant and broadcasts `user:left` to remaining participants.
+
+```json
+{
+  "type": "user:leave",
+  "data": {
+    "userId": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | string | The user ID of the departing participant |
+
+---
+
+### `webrtc:offer`
+
+Send a WebRTC offer SDP to a specific participant. The server forwards the message to the target socket, adding a `from` field.
+
+```json
+{
+  "type": "webrtc:offer",
+  "data": {
+    "to": "target-socket-id",
+    "sdp": {
+      "type": "offer",
+      "sdp": "v=0\r\no=- 46117..."
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `to` | string | Socket ID of the target participant |
+| `sdp` | object | WebRTC session description |
+| `sdp.type` | string | `"offer"` |
+| `sdp.sdp` | string | SDP string |
+
+---
+
+### `webrtc:answer`
+
+Send a WebRTC answer SDP to a specific participant. The server forwards the message to the target socket.
+
+```json
+{
+  "type": "webrtc:answer",
+  "data": {
+    "to": "target-socket-id",
+    "sdp": {
+      "type": "answer",
+      "sdp": "v=0\r\no=- 46117..."
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `to` | string | Socket ID of the target participant |
+| `sdp` | object | WebRTC session description |
+| `sdp.type` | string | `"answer"` |
+| `sdp.sdp` | string | SDP string |
+
+---
+
+### `webrtc:ice-candidate`
+
+Send an ICE candidate to a specific participant. The server forwards the message to the target socket.
+
+```json
+{
+  "type": "webrtc:ice-candidate",
+  "data": {
+    "to": "target-socket-id",
+    "candidate": {
+      "candidate": "candidate:0 1 UDP 2122252543 192.168.1.2 54321 typ host",
+      "sdpMid": "0",
+      "sdpMLineIndex": 0
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `to` | string | Socket ID of the target participant |
+| `candidate.candidate` | string | ICE candidate string |
+| `candidate.sdpMid` | string | Media stream ID. May be `null`. |
+| `candidate.sdpMLineIndex` | number | Media line index. May be `null`. |
+
+---
+
+### `mic:toggle`
+
+Broadcast a microphone state change to all other participants in the room.
+
+```json
+{
+  "type": "mic:toggle",
+  "data": {
+    "micOn": false,
+    "socketId": "sender-socket-id"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `micOn` | boolean | New microphone state |
+| `socketId` | string | Socket ID of the participant toggling their mic |
+
+---
+
+### `cam:toggle`
+
+Broadcast a camera state change to all other participants in the room.
+
+```json
+{
+  "type": "cam:toggle",
+  "data": {
+    "camOn": true,
+    "socketId": "sender-socket-id"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `camOn` | boolean | New camera state |
+| `socketId` | string | Socket ID of the participant toggling their camera |
+
+---
+
+### `project-id`
+
+Register the project ID for the current recording session. Stored on the room and sent to new participants in `room:ready`.
+
+```json
+{
+  "type": "project-id",
+  "data": {
+    "projectId": "proj-uuid-1234"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `projectId` | string | ID of the project associated with this session |
+
+---
+
+### `track-id`
+
+Register the track ID for the current recording session. Stored on the room and sent to new participants in `room:ready`.
+
+```json
+{
+  "type": "track-id",
+  "data": {
+    "trackId": "track-uuid-5678"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trackId` | string | ID of the track being recorded |
+
+---
+
+### `recording:start`
+
+Signals that recording has started. Updates the recording status on the sender's room slot.
+
+```json
+{
+  "type": "recording:start",
+  "data": {
+    "recordingStatus": true,
+    "projectId": "proj-uuid-1234"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recordingStatus` | boolean | `true` to indicate recording is active |
+| `projectId` | string | ID of the project being recorded |
+
+---
+
+### `recording:stop`
+
+Signals that recording has stopped. Updates the recording status on the sender's room slot.
+
+```json
+{
+  "type": "recording:stop",
+  "data": {
+    "recordingStatus": false,
+    "trackId": "track-uuid-5678"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recordingStatus` | boolean | `false` to indicate recording has stopped |
+| `trackId` | string | ID of the track that was recorded |
+
+---
+
+### `meeting:end`
+
+Host-only. Ends the meeting for all participants. The server broadcasts `meeting:end` to all sockets in the room.
+
+```json
+{
+  "type": "meeting:end",
+  "data": {
+    "socketId": "host-socket-id"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `socketId` | string | Socket ID of the host ending the meeting |
+
+---
+
+## Outbound events (server → client)
+
+These are the message types the server sends to clients.
+
+### `room:ready`
+
+Sent to a participant immediately after they successfully join a room. Contains their assigned socket ID and any existing project or track context.
+
+```json
+{
+  "type": "room:ready",
+  "data": {
+    "selfSocketId": "abc123",
+    "projectId": "proj-uuid-1234",
+    "trackId": "track-uuid-5678"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `selfSocketId` | string | The socket ID assigned to this participant |
+| `projectId` | string | Active project ID, if set. May be `null`. |
+| `trackId` | string | Active track ID, if set. May be `null`. |
+
+---
+
+### `participants:list`
+
+Sent to a newly joined participant. Lists all existing participants already in the room, so the client can initiate WebRTC peer connections.
+
+```json
+{
+  "type": "participants:list",
+  "data": {
+    "participants": [
+      {
+        "user": {
+          "userId": "user-id-abc",
+          "name": "Alex",
+          "role": "host",
+          "socketId": "socket-abc",
+          "micOn": true,
+          "camOn": true
+        }
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `user:joined`
+
+Broadcast to all existing participants when a new participant joins.
+
+```json
+{
+  "type": "user:joined",
+  "data": {
+    "user": {
+      "userId": "user-id-xyz",
+      "name": "Jane Smith",
+      "role": "guest",
+      "socketId": "socket-xyz",
+      "micOn": true,
+      "camOn": false
+    }
+  }
+}
+```
+
+---
+
+### `user:left`
+
+Broadcast to all remaining participants when someone leaves.
+
+```json
+{
+  "type": "user:left",
+  "data": {
+    "user": {
+      "userId": "user-id-xyz",
+      "role": "guest",
+      "socketId": "socket-xyz",
+      "name": ""
+    }
+  }
+}
+```
+
+---
+
+### `webrtc:offer` / `webrtc:answer` / `webrtc:ice-candidate`
+
+The signaling server forwards these directly to the target socket with a `from` field added to the `data` object.
+
+```json
+{
+  "type": "webrtc:offer",
+  "data": {
+    "to": "target-socket-id",
+    "from": "sender-socket-id",
+    "sdp": {
+      "type": "offer",
+      "sdp": "v=0\r\no=- 46117..."
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `to` | string | Socket ID of the intended recipient |
+| `from` | string | Socket ID of the sender (added by server) |
+| `sdp` | object | Session description (for offer/answer) |
+| `candidate` | object | ICE candidate (for ice-candidate) |
+
+---
+
+### `mic:toggle` / `cam:toggle`
+
+Broadcast to all other room participants when a participant toggles their mic or camera.
+
+```json
+{
+  "type": "mic:toggle",
+  "data": {
+    "micOn": false,
+    "socketId": "sender-socket-id"
+  }
+}
+```
+
+---
+
+### `meeting:end`
+
+Broadcast to all participants when the host ends the meeting.
+
+```json
+{
+  "type": "meeting:end",
+  "data": {
+    "studioSlug": "jane-smith-s-studio"
+  }
+}
+```
+
+---
+
+### `error`
+
+Sent to a single participant when the server encounters a problem processing their message. The connection is closed after this message.
+
+```json
+{
+  "type": "error",
+  "data": {
+    "message": "User already in room."
+  }
+}
+```

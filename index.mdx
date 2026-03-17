@@ -1,97 +1,90 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Audora"
+description: "A scalable, full-stack platform for remote audio/video recording, real-time communication, and media processing — built with WebRTC, Next.js, and Bun."
 ---
 
-## Setting up
-
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Audora running locally in under 10 minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand the three-service monorepo structure.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Explore the REST API and WebSocket event protocol.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Deployment" icon="server" href="/deployment/docker">
+    Deploy the full stack with Docker Compose.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is Audora?
 
-Everything you need to create world-class documentation.
+Audora is an open-source, self-hostable podcast and remote recording platform. It gives you studio-grade audio and video capture directly in the browser — no desktop app required. Participants join a shared room via WebRTC; each person's media is recorded locally and uploaded to your storage backend over a resilient chunked pipeline.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+The platform is built as a **Turborepo monorepo** with three independently deployable services:
 
-## Need inspiration?
+| Service | Technology | Purpose |
+|---|---|---|
+| `audora-frontend` | Next.js 15, TailwindCSS v4 | User-facing dashboard and studio recording UI |
+| `audora-api` | Express, Bun | REST API, authentication, project management |
+| `audora-signal` | WebSocket (ws), Bun | WebRTC signaling and room coordination |
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+A shared `packages/database` package (Prisma + PostgreSQL) is used across both the API and signal services.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="WebRTC recording" icon="video">
+    Browser-native peer-to-peer video and audio capture with local track isolation. Each participant's stream is recorded independently for maximum post-production flexibility.
+  </Card>
+  <Card title="Chunked uploads" icon="cloud-arrow-up">
+    Media is sliced into chunks and uploaded to your S3-compatible backend as recording progresses. Uploads survive network interruptions and can be paused and resumed.
+  </Card>
+  <Card title="Real-time signaling" icon="signal">
+    A dedicated WebSocket server handles WebRTC offer/answer/ICE exchange and broadcasts mic/camera toggle events to all room participants.
+  </Card>
+  <Card title="Studio management" icon="sliders">
+    Each user gets a personal studio with configurable recording type (video+audio or audio-only), video quality, audio sample rate, noise reduction, and lobby settings.
+  </Card>
+  <Card title="Project & track model" icon="folder-tree">
+    Recordings are organized into projects and tracks. Multiple participants in the same session each produce their own track, enabling multi-track editing workflows.
+  </Card>
+  <Card title="Auth & security" icon="shield-check">
+    NextAuth.js powers authentication with credentials and Google OAuth. JWT-based meeting tokens authorize WebSocket connections to rooms.
+  </Card>
+</CardGroup>
+
+## Tech stack
+
+<CardGroup cols={2}>
+  <Card title="Frontend" icon="browser">
+    Next.js 15 · TailwindCSS v4 · Zustand · NextAuth.js · Framer Motion
+  </Card>
+  <Card title="Backend" icon="server">
+    Express · Bun runtime · Prisma · PostgreSQL · Kafka
+  </Card>
+  <Card title="Real-time" icon="wifi">
+    WebRTC · WebSocket (ws library) · JWT meeting tokens
+  </Card>
+  <Card title="Infrastructure" icon="docker">
+    Docker Compose · Turborepo · GitHub Actions · AWS S3 · FFmpeg
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<Steps>
+  <Step title="Set up your environment">
+    Follow the [Quickstart guide](/quickstart) to clone the repo, configure environment variables, and start all three services.
+  </Step>
+  <Step title="Understand the architecture">
+    Read the [Architecture overview](/architecture) to learn how the frontend, API, and signal server interact.
+  </Step>
+  <Step title="Configure your studio">
+    Learn about [Studio settings](/features/studio) to customize recording quality, lobby behavior, and participant options.
+  </Step>
+  <Step title="Deploy to production">
+    Use the [Docker deployment guide](/deployment/docker) to run the full stack in production with a single `docker compose up`.
+  </Step>
+</Steps>

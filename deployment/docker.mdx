@@ -1,0 +1,223 @@
+---
+title: "Docker deployment"
+description: "Run the complete Audora stack with Docker Compose"
+---
+
+Audora ships with a production-ready Docker Compose configuration that starts all four services — frontend, backend API, signal server, and Postgres — with a single command.
+
+<Warning>
+  You must create a `.env` file from `.env.example` and populate every required variable **before** running any `docker compose` command. Containers will fail to start or behave incorrectly if secrets are missing or left at their default placeholder values.
+</Warning>
+
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) 24+ and the Compose plugin (`docker compose`)
+- [Bun](https://bun.sh) 1.3.10+ (only needed for the `bun run infra:up` shortcut)
+- A populated `.env` file at the repository root
+
+## Environment setup
+
+Copy the example file and fill in all values:
+
+```bash
+cp .env.example .env
+```
+
+At minimum the following variables must be set before the stack will start:
+
+| Variable | Description |
+|---|---|
+| `POSTGRES_PASSWORD` | Password for the `audora_user` Postgres role |
+| `DATABASE_URL` | Full connection string — must match `POSTGRES_PASSWORD` |
+| `NEXTAUTH_SECRET` | Random 32-byte secret. Generate with `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | Public URL of the frontend (e.g. `http://localhost:3000`) |
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 client ID from Google Cloud Console |
+| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 client secret from Google Cloud Console |
+
+## Services
+
+The `docker-compose.yaml` defines four services. Each service uses a dedicated production Dockerfile located in the `docker/` directory.
+
+### Port mappings
+
+| Service | Container port(s) | Host port(s) | Dockerfile |
+|---|---|---|---|
+| `frontend` | 3000 | 3000 | `docker/frontend.prod.Dockerfile` |
+| `backend` | 9000 | 9000 | `docker/backend.prod.Dockerfile` |
+| `signal` | 8000, 8001 | 8000, 8001 | `docker/signal.prod.Dockerfile` |
+| `database` | 5432 | 5432 | `postgres:16` (official image) |
+
+### Service dependency order
+
+```
+database  ←  backend  ←  frontend
+          ←  signal   ↗
+```
+
+Both `backend` and `signal` wait for `database` to pass its health check before they start. `frontend` waits for both `backend` and `signal` to become healthy.
+
+## Health checks
+
+Every service declares a health check so Compose can gate dependent start-up correctly.
+
+<CodeGroup>
+
+```yaml frontend
+healthcheck:
+  test: ["CMD-SHELL", "curl --fail http://localhost:3000 || exit 1"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+```
+
+```yaml backend
+healthcheck:
+  test: ["CMD-SHELL", "curl --fail http://localhost:9000/ || exit 1"]
+  interval: 5s
+  timeout: 3s
+  retries: 5
+  start_period: 15s
+```
+
+```yaml signal
+healthcheck:
+  test: ["CMD-SHELL", "curl --fail http://localhost:8001/health || exit 1"]
+  interval: 5s
+  timeout: 3s
+  retries: 5
+  start_period: 10s
+```
+
+```yaml database
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U audora_user -d audora"]
+  interval: 5s
+  timeout: 5s
+  retries: 5
+```
+
+</CodeGroup>
+
+The signal server exposes a dedicated `/health` endpoint on port **8001** specifically for health checks, keeping it separate from the WebSocket traffic on port 8000.
+
+## Build arguments
+
+Some environment variables are baked into the image at build time (Next.js public vars). The Compose file passes these as `args` to each build.
+
+### frontend build args
+
+| Arg | Default in compose | Description |
+|---|---|---|
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Public URL of the frontend app |
+| `NEXT_PUBLIC_HTTP_URL` | `http://backend:9000` | URL the browser uses to reach the API |
+| `NEXT_PUBLIC_SIGNALING_URL` | `ws://localhost:8000` | WebSocket URL for the signal server |
+
+### backend build args
+
+| Arg | Source | Description |
+|---|---|---|
+| `DATABASE_URL` | `${DATABASE_URL}` from `.env` | Prisma connection string (used at build for migrations) |
+
+### signal build args
+
+| Arg | Source | Description |
+|---|---|---|
+| `DATABASE_URL` | `${DATABASE_URL}` from `.env` | Database connection string |
+
+## Running the stack
+
+<Steps>
+
+### Build the images
+
+```bash
+docker compose build
+```
+
+Or use the npm script alias:
+
+```bash
+bun run infra:build
+```
+
+### Start all services in detached mode
+
+<CodeGroup>
+
+```bash docker compose
+docker compose up -d
+```
+
+```bash bun shortcut
+bun run infra:up
+```
+
+</CodeGroup>
+
+### Verify the services are running
+
+```bash
+docker compose ps
+```
+
+All four services should show `healthy` status within about 30 seconds.
+
+### Stop the stack
+
+<CodeGroup>
+
+```bash docker compose
+docker compose down
+```
+
+```bash bun shortcut
+bun run infra:down
+```
+
+</CodeGroup>
+
+</Steps>
+
+## Individual service builds
+
+You can build each service image independently using the scripts defined in `package.json`:
+
+```bash
+bun run build:frontend   # docker build -f docker/frontend.prod.Dockerfile -t audora-frontend .
+bun run build:backend    # docker build -f docker/backend.prod.Dockerfile  -t audora-backend  .
+bun run build:signal     # docker build -f docker/signal.prod.Dockerfile   -t audora-signal   .
+```
+
+## Production Dockerfiles
+
+All three application Dockerfiles follow the same pattern:
+
+- **Base image**: `oven/bun:1.3.10-debian` — a Debian-based image with Bun 1.3.10 pre-installed
+- **Layer caching**: `package.json` files are copied and `bun install` is run before application source, so the dependency layer is cached between builds
+- **Monorepo-aware**: only the relevant `apps/*` directory and shared `packages/*` are copied, keeping images lean
+- **curl installed**: required by the health check commands
+
+## Data persistence
+
+<Note>
+  Postgres data is stored in the named Docker volume `audora_postgres_data`. This volume persists across `docker compose down` restarts. To fully reset the database you must explicitly remove the volume with `docker compose down -v` or `docker volume rm audora_postgres_data`.
+</Note>
+
+The volume is declared at the bottom of `docker-compose.yaml`:
+
+```yaml
+volumes:
+  audora_postgres_data:
+```
+
+And mounted in the `database` service at `/var/lib/postgresql/data`, the standard Postgres data directory.
+
+## Database-only commands
+
+During development you may want to run only the database container:
+
+```bash
+bun run db:up      # docker compose up -d database
+bun run db:down    # docker compose down database
+```

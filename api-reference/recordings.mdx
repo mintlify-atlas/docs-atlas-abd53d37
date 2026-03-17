@@ -1,0 +1,55 @@
+---
+title: 'Recording endpoints'
+description: 'Upload recorded media chunks to the Audora API.'
+---
+
+Recordings are captured in the browser and uploaded as binary chunks in real time during a session. Each chunk is sent as a separate `multipart/form-data` request.
+
+---
+
+## Upload chunk
+
+`POST /recording/chunks`
+
+Accepts a single binary chunk of a recording. The client sends chunks sequentially during a live recording session. The server stores each chunk and returns immediately.
+
+<Note>
+  This endpoint does not currently require authentication. It accepts all `multipart/form-data` requests that include a valid `chunk` file field.
+</Note>
+
+**Content type:** `multipart/form-data`
+
+<ParamField path="body.chunk" type="file" required>
+  The binary recording chunk to upload. Must be provided as a file field named `chunk` in the multipart form data.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` when the chunk was received successfully.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Chunk uploaded successfully"`
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST http://localhost:9000/recording/chunks \
+      -F "chunk=@/path/to/chunk-001.webm"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Chunk uploaded successfully"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"No chunk file provided"` | The `chunk` field is missing from the form data |

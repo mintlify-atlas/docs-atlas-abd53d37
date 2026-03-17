@@ -1,0 +1,294 @@
+---
+title: "Local development setup"
+description: "Get Audora running on your machine for local development."
+---
+
+## Prerequisites
+
+Before you begin, make sure the following tools are installed and meet the minimum version requirements:
+
+| Tool | Minimum version | Purpose |
+|---|---|---|
+| [Bun](https://bun.sh) | ≥ 1.3.10 | Package manager and runtime |
+| [Node.js](https://nodejs.org) | ≥ 18 | Required by some tooling |
+| [Docker](https://www.docker.com) & Docker Compose | Latest stable | Runs the PostgreSQL database |
+| [PostgreSQL](https://www.postgresql.org) | ≥ 14 | Primary database |
+| [FFmpeg](https://ffmpeg.org) | Latest stable | Media processing and transcoding |
+
+<Note>
+  Audora uses **Bun** as its package manager. Do not use `npm`, `yarn`, or `pnpm` to install dependencies — the lockfile is tied to Bun and mixing package managers will cause issues.
+</Note>
+
+---
+
+## Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/narsibhati-dev/audora.git
+    cd audora
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all workspace dependencies from the monorepo root. Turborepo and Bun workspaces will handle linking the internal packages automatically.
+
+    ```bash
+    bun install
+    ```
+  </Step>
+
+  <Step title="Configure environment variables">
+    Copy the example environment file and fill in your values:
+
+    ```bash
+    cp .env.example .env
+    ```
+
+    Open `.env` and configure the required variables:
+
+    ```bash
+    # Database
+    DATABASE_URL="postgresql://postgres:postgres@localhost:5432/audora"
+
+    # Auth
+    NEXTAUTH_SECRET="your-secret-here"
+    NEXTAUTH_URL="http://localhost:3000"
+    GOOGLE_CLIENT_ID="your-google-client-id"
+    GOOGLE_CLIENT_SECRET="your-google-client-secret"
+
+    # URLs
+    NEXT_PUBLIC_API_URL="http://localhost:9000"
+    NEXT_PUBLIC_SIGNAL_URL="http://localhost:8000"
+    NEXT_PUBLIC_SITE_URL="http://localhost:3000"
+    FRONTEND_URL="http://localhost:3000"
+
+    # API
+    PORT=9000
+
+    # Signal server
+    # PORT=8000 (set per-service if needed)
+    ```
+
+    <Tip>
+      Google OAuth credentials can be created in the [Google Cloud Console](https://console.cloud.google.com). For local development, add `http://localhost:3000` as an authorized redirect URI.
+    </Tip>
+  </Step>
+
+  <Step title="Start the database">
+    Spin up the PostgreSQL container using Docker Compose:
+
+    ```bash
+    bun run db:up
+    ```
+
+    This starts a PostgreSQL instance on port **5432**.
+  </Step>
+
+  <Step title="Run database migrations">
+    Apply all pending Prisma migrations and generate the Prisma client:
+
+    ```bash
+    bun run db:deploy
+    ```
+
+    This runs `prisma migrate deploy` followed by `prisma generate` inside the `@audora/database` package.
+  </Step>
+
+  <Step title="Start the development server">
+    Start all three services in parallel using Turborepo:
+
+    ```bash
+    bun run dev
+    ```
+
+    This runs `turbo run dev` across every app in the monorepo, starting:
+
+    | Service | URL | Description |
+    |---|---|---|
+    | `audora-frontend` | http://localhost:3000 | Next.js UI (Turbopack) |
+    | `audora-api` | http://localhost:9000 | Express REST API |
+    | `audora-signal` | http://localhost:8000 | WebSocket signalling server |
+  </Step>
+</Steps>
+
+---
+
+## Starting individual services
+
+When you only need to work on one part of the stack, you can start a single service from the monorepo root:
+
+```bash
+# Frontend only
+bun run start:frontend
+
+# API only
+bun run start:api
+
+# Signal server only
+bun run start:signal
+```
+
+These commands use Turborepo's `--filter` flag to scope execution to the relevant app and its dependencies.
+
+---
+
+## Available scripts
+
+All scripts are defined in the root `package.json` and delegate to Turborepo.
+
+### Development
+
+| Script | Command | Description |
+|---|---|---|
+| Start all services | `bun run dev` | Runs all apps in development mode with hot reload |
+| Start frontend | `bun run start:frontend` | Starts the Next.js app only |
+| Start API | `bun run start:api` | Starts the Express API only |
+| Start signal server | `bun run start:signal` | Starts the WebSocket server only |
+
+### Build
+
+| Script | Command | Description |
+|---|---|---|
+| Build all | `bun run build` | Builds every app for production via Turborepo |
+| Build frontend image | `bun run build:frontend` | Builds the frontend Docker image |
+| Build API image | `bun run build:backend` | Builds the API Docker image |
+| Build signal image | `bun run build:signal` | Builds the signal server Docker image |
+
+### Database
+
+| Script | Command | Description |
+|---|---|---|
+| Start DB | `bun run db:up` | Starts the PostgreSQL Docker container |
+| Stop DB | `bun run db:down` | Stops the PostgreSQL Docker container |
+| Deploy migrations | `bun run db:deploy` | Runs `prisma migrate deploy` and regenerates client |
+| Create migration | `bun run db:migrate` | Runs `prisma migrate dev` (creates a new migration) |
+| Seed database | `bun run db:seed` | Runs the Prisma seed script |
+| Reset database | `bun run db:reset` | Resets the database and reruns all migrations |
+| Generate client | `bun run db:generate` | Regenerates the Prisma client without migrating |
+| Open Prisma Studio | `bun run db:studio` | Opens the Prisma Studio GUI in the browser |
+
+### Code quality
+
+| Script | Command | Description |
+|---|---|---|
+| Lint | `bun run lint` | Runs ESLint across all packages |
+| Format | `bun run format` | Formats all `.ts`, `.tsx`, and `.md` files with Prettier |
+| Type check | `bun run check-types` | Runs `tsc --noEmit` across all packages |
+
+### Infrastructure
+
+| Script | Command | Description |
+|---|---|---|
+| Start all infra | `bun run infra:up` | Starts all Docker Compose services |
+| Stop all infra | `bun run infra:down` | Stops all Docker Compose services |
+| Build infra images | `bun run infra:build` | Rebuilds all Docker images without cache |
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="bun install fails or produces errors">
+    Make sure your Bun version is at least **1.3.10**:
+
+    ```bash
+    bun --version
+    ```
+
+    Upgrade Bun if needed:
+
+    ```bash
+    bun upgrade
+    ```
+
+    Then clear any stale state and reinstall:
+
+    ```bash
+    rm -rf node_modules **/node_modules bun.lockb
+    bun install
+    ```
+  </Accordion>
+
+  <Accordion title="Database connection refused">
+    The PostgreSQL container may not be running. Start it with:
+
+    ```bash
+    bun run db:up
+    ```
+
+    Verify the container is healthy:
+
+    ```bash
+    docker ps
+    ```
+
+    Also confirm that `DATABASE_URL` in your `.env` uses port **5432** and matches the credentials configured in `docker-compose.yml`.
+  </Accordion>
+
+  <Accordion title="Prisma client is out of date or missing">
+    After pulling new changes that include schema updates, always redeploy migrations and regenerate the client:
+
+    ```bash
+    bun run db:deploy
+    ```
+
+    If you only need to regenerate without migrating:
+
+    ```bash
+    bun run db:generate
+    ```
+  </Accordion>
+
+  <Accordion title="Port conflicts on startup">
+    If a service fails to start because a port is already in use, identify and stop the conflicting process:
+
+    ```bash
+    # Find what is using a port (e.g. 3000)
+    lsof -i :3000
+
+    # Kill by PID
+    kill -9 <PID>
+    ```
+
+    Default ports are `3000` (frontend), `9000` (API), and `8000` (signal server).
+  </Accordion>
+
+  <Accordion title="FFmpeg not found">
+    FFmpeg must be available on your `PATH`. Install it with your system package manager:
+
+    ```bash
+    # macOS
+    brew install ffmpeg
+
+    # Ubuntu / Debian
+    sudo apt install ffmpeg
+
+    # Windows (via Chocolatey)
+    choco install ffmpeg
+    ```
+
+    Verify the installation:
+
+    ```bash
+    ffmpeg -version
+    ```
+  </Accordion>
+
+  <Accordion title="Next.js build or type errors after pulling changes">
+    Run a full type check to surface all issues:
+
+    ```bash
+    bun run check-types
+    ```
+
+    If internal packages have changed, try cleaning build artifacts and reinstalling:
+
+    ```bash
+    rm -rf apps/audora-frontend/.next
+    bun install
+    bun run dev
+    ```
+  </Accordion>
+</AccordionGroup>

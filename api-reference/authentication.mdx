@@ -1,0 +1,61 @@
+---
+title: 'Authentication'
+description: 'How to authenticate requests to the Audora API using Bearer tokens.'
+---
+
+The Audora API uses two types of JWT tokens:
+
+- **Access token** — authenticates REST API requests
+- **Meeting token** — authorizes WebSocket connections for a specific studio session
+
+## Access tokens
+
+Access tokens are issued when you call `/auth/login` or `/auth/google`. On the frontend, NextAuth.js stores the token in the session and attaches it to API requests automatically.
+
+Include the token in the `Authorization` header for every protected request:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+### Example headers
+
+```http
+GET /studio/get HTTP/1.1
+Host: localhost:9000
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImFiYzEyMyIsImlhdCI6MTcwMDAwMDAwMH0.signature
+Content-Type: application/json
+```
+
+### Token expiry and refresh
+
+Access tokens are signed JWTs with a fixed expiry. When a token expires, the server returns `401 Unauthorized` with the message `"Invalid or expired token"`. Re-authenticate by calling `/auth/login` or `/auth/google` to obtain a fresh token.
+
+The frontend NextAuth.js session handles token persistence and re-hydration automatically. Custom integrations must store the token and detect 401 responses to trigger re-authentication.
+
+### Error responses
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `401` | `Access Denied: No token provided` | `Authorization` header is missing |
+| `401` | `Access Denied: No token after Bearer` | Header present but token string is empty |
+| `401` | `Invalid or expired token` | Token is malformed, tampered, or expired |
+| `401` | `Authentication Failed` | Unexpected error during verification |
+
+## Meeting tokens
+
+Meeting tokens are separate short-lived JWTs scoped to a specific studio. They are issued by `POST /meeting/generate-token` and used exclusively to authenticate WebSocket connections to the signaling server.
+
+The meeting token encodes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `studioId` | string | ID of the studio |
+| `studioSlug` | string | URL slug of the studio |
+| `roomId` | string | Unique room identifier for the session |
+| `userId` | string | Participant's user ID |
+| `participantId` | string | Unique participant ID for this session |
+| `participantRole` | `"host"` \| `"guest"` | Role in the meeting |
+| `recordable` | boolean | Whether this participant can start recording |
+
+Pass the meeting token when opening the WebSocket connection. See [WebSocket events](/api-reference/websocket-events) for connection details.

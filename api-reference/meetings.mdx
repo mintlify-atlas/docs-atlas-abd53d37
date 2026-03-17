@@ -1,0 +1,101 @@
+---
+title: 'Meeting endpoints'
+description: 'Generate meeting tokens that authorize WebSocket connections to the Audora signaling server.'
+---
+
+The meeting token is a short-lived JWT scoped to a specific studio session. It is separate from the access token used for REST API requests and is required to connect to the WebSocket signaling server.
+
+---
+
+## Generate meeting token
+
+`POST /meeting/generate-token`
+
+Issues a meeting JWT for a participant. The token encodes the studio, the participant's role (`host` or `guest`), and recording permissions. Pass this token when opening a WebSocket connection to authenticate. See [WebSocket events](/api-reference/websocket-events).
+
+**Role determination:**
+- If `userId` matches the `userId` on the studio record, the participant is assigned the `host` role.
+- All other participants are `guest`. Guests must supply the studio's `studioToken` to authenticate.
+
+<ParamField path="body.studioSlug" type="string" required>
+  The URL slug of the studio to join.
+</ParamField>
+
+<ParamField path="body.userId" type="string">
+  The user ID of the participant. If omitted, a random UUID is generated (anonymous guest).
+</ParamField>
+
+<ParamField path="body.studioToken" type="string">
+  The studio's invite token. Required for guest participants. Obtain this from the studio owner or from the `token` field on the studio object.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Meeting token generated successfully"`
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties">
+    <ResponseField name="token" type="string">
+      Signed JWT to use when connecting to the WebSocket server. The payload contains `studioId`, `studioSlug`, `roomId`, `userId`, `participantId`, `participantRole`, and `recordable`.
+    </ResponseField>
+    <ResponseField name="userId" type="string">
+      The resolved user ID for this session. Matches the `userId` from the request, or a generated UUID for anonymous guests.
+    </ResponseField>
+    <ResponseField name="participantRole" type="string">
+      `"host"` if the `userId` owns the studio, otherwise `"guest"`.
+    </ResponseField>
+    <ResponseField name="studioFixedToken" type="string">
+      The studio's invite token. Share this with guests so they can authenticate when joining.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Host request">
+    ```bash
+    curl -X POST http://localhost:9000/meeting/generate-token \
+      -H "Content-Type: application/json" \
+      -d '{
+        "studioSlug": "jane-smith-s-studio",
+        "userId": "550e8400-e29b-41d4-a716-446655440000"
+      }'
+    ```
+  </Tab>
+  <Tab title="Guest request">
+    ```bash
+    curl -X POST http://localhost:9000/meeting/generate-token \
+      -H "Content-Type: application/json" \
+      -d '{
+        "studioSlug": "jane-smith-s-studio",
+        "studioToken": "clxxxxxxxxxxxxxxxxxxxxxxx"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Meeting token generated successfully",
+      "data": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "userId": "550e8400-e29b-41d4-a716-446655440000",
+        "participantRole": "host",
+        "studioFixedToken": "clxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Missing required field: studioSlug"` | `studioSlug` not provided |
+| `401` | `"Invalid studio token for guest"` | Guest `studioToken` does not match studio record |
+| `404` | `"Studio not found"` | No studio with the given `studioSlug` exists |
+| `500` | `"Failed to generate meeting token"` | Unexpected server error |

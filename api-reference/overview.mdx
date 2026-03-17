@@ -1,0 +1,91 @@
+---
+title: 'API overview'
+description: 'Base URLs, request format, authentication, and a complete list of available endpoints.'
+---
+
+The Audora API is a REST API served over HTTP. All requests and responses use JSON. The base URL is configurable via the `NEXT_PUBLIC_HTTP_URL` environment variable.
+
+**Base URL**
+
+```
+http://localhost:9000
+```
+
+All resource routes are prefixed with `/api/` when accessed through the frontend proxy. When calling the API server directly, routes are mounted at the root (e.g., `/auth/login`, `/studio/get`).
+
+## Request format
+
+Send all request bodies as JSON with the `Content-Type: application/json` header, except for chunk upload requests which use `multipart/form-data`.
+
+## Authentication
+
+Protected endpoints require a JWT Bearer token in the `Authorization` header. Tokens are issued by the Audora API on login or registration, and surfaced through the NextAuth.js session on the frontend. See [Authentication](/api-reference/authentication) for details.
+
+```http
+Authorization: Bearer <token>
+```
+
+<Note>
+  Auth endpoints (`/auth/register`, `/auth/login`, `/auth/google`) are rate-limited. Exceeding the limit returns `429 Too Many Requests`. Back off and retry after a short delay.
+</Note>
+
+## Authenticated request example
+
+```bash
+curl -X GET http://localhost:9000/studio/get \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+## Available endpoints
+
+### Auth
+
+| Method | Path | Auth required | Description |
+|--------|------|:---:|-------------|
+| `POST` | `/auth/register` | No | Register a new user |
+| `POST` | `/auth/login` | No | Log in with email and password |
+| `POST` | `/auth/google` | No | Register or log in with Google |
+
+### Studio
+
+| Method | Path | Auth required | Description |
+|--------|------|:---:|-------------|
+| `GET` | `/studio/get` | Yes | Get the authenticated user's studio |
+| `POST` | `/studio/create` | Yes | Create a new studio |
+| `PUT` | `/studio/update` | Yes | Update studio name |
+| `DELETE` | `/studio/delete` | Yes | Delete the authenticated user's studio |
+| `POST` | `/studio/update-setting` | Yes | Update a single studio setting |
+
+### Projects
+
+| Method | Path | Auth required | Description |
+|--------|------|:---:|-------------|
+| `POST` | `/project/create` | Yes | Create a new project |
+| `PUT` | `/project/update/:projectId` | Yes | Update a project title |
+| `DELETE` | `/project/delete/:projectId` | Yes | Delete a project |
+| `GET` | `/project/get/:projectId` | Yes | Get a project by ID |
+| `GET` | `/project/get-all/:studioId` | Yes | List all projects for a studio |
+
+### Recordings
+
+| Method | Path | Auth required | Description |
+|--------|------|:---:|-------------|
+| `POST` | `/recording/chunks` | No | Upload a recording chunk |
+
+### Meetings
+
+| Method | Path | Auth required | Description |
+|--------|------|:---:|-------------|
+| `POST` | `/meeting/generate-token` | No | Generate a meeting JWT for WebSocket access |
+
+## WebSocket server
+
+Real-time signaling uses a separate WebSocket server. See [WebSocket events](/api-reference/websocket-events) for connection details and message types.
+
+**Signaling base URL**
+
+```
+ws://localhost:8000
+```
+
+Configurable via `NEXT_PUBLIC_SIGNALING_URL`.

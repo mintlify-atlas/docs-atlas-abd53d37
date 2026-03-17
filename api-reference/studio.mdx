@@ -1,0 +1,343 @@
+---
+title: 'Studio endpoints'
+description: 'Create, read, update, and delete studios. Each user has exactly one studio.'
+---
+
+All studio endpoints require a valid Bearer token. See [Authentication](/api-reference/authentication).
+
+Each user account has at most one studio. A default studio is created automatically on registration. The studio holds recording settings and acts as the container for [projects](/api-reference/projects).
+
+---
+
+## Get studio
+
+`GET /studio/get`
+
+Returns the studio belonging to the authenticated user.
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Studio fetched successfully"`
+</ResponseField>
+
+<ResponseField name="studio" type="object">
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">Unique studio ID (UUID).</ResponseField>
+    <ResponseField name="studioSlug" type="string">URL-safe slug derived from the studio name. Unique across all studios.</ResponseField>
+    <ResponseField name="studioName" type="string">Human-readable studio name.</ResponseField>
+    <ResponseField name="token" type="string">Studio invite token used to authenticate guest meeting participants.</ResponseField>
+    <ResponseField name="userId" type="string">ID of the owning user.</ResponseField>
+    <ResponseField name="recordingType" type="string">`"VIDEO_AUDIO"` or `"AUDIO_ONLY"`</ResponseField>
+    <ResponseField name="audioSampleRate" type="string">`"KHZ_44_1"` or `"KHZ_48"`</ResponseField>
+    <ResponseField name="videoQuality" type="string">`"STANDARD"` or `"ADVANCED"`</ResponseField>
+    <ResponseField name="language" type="string">Caption/transcription language. One of: `English`, `Spanish`, `French`, `German`, `Italian`, `Japanese`, `Korean`, `Arabic`, `Turkish`, `Portuguese`, `Dutch`, `Polish`, `Romanian`, `Chinese`, `Russian`.</ResponseField>
+    <ResponseField name="noiseReduction" type="boolean">Whether noise reduction is enabled.</ResponseField>
+    <ResponseField name="countdownBeforeRecording" type="boolean">Show a countdown before recording starts.</ResponseField>
+    <ResponseField name="enableLobby" type="boolean">Hold guests in a lobby before admitting them.</ResponseField>
+    <ResponseField name="enableCaptions" type="boolean">Enable live captions.</ResponseField>
+    <ResponseField name="autoStartOnGuestJoin" type="boolean">Automatically start recording when a guest joins.</ResponseField>
+    <ResponseField name="pauseUploads" type="boolean">Pause chunk uploads to the server.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="updatedAt" type="string">ISO 8601 last-updated timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET http://localhost:9000/studio/get \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Studio fetched successfully",
+      "studio": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "studioSlug": "jane-smith-s-studio",
+        "studioName": "jane-smith's-studio",
+        "token": "clxxxxxxxxxxxxxxxxxxxxxxx",
+        "userId": "550e8400-e29b-41d4-a716-446655440000",
+        "recordingType": "VIDEO_AUDIO",
+        "audioSampleRate": "KHZ_44_1",
+        "videoQuality": "STANDARD",
+        "language": "English",
+        "noiseReduction": false,
+        "countdownBeforeRecording": false,
+        "enableLobby": false,
+        "enableCaptions": false,
+        "autoStartOnGuestJoin": false,
+        "pauseUploads": false,
+        "createdAt": "2024-01-15T10:30:00.000Z",
+        "updatedAt": "2024-01-15T10:30:00.000Z"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `401` | `"Access Denied: No token provided"` | Missing Authorization header |
+| `404` | `"Studio not found"` | No studio exists for this user |
+
+---
+
+## Create studio
+
+`POST /studio/create`
+
+Creates a new studio for the authenticated user with default settings. Fails if the user already has a studio.
+
+<ParamField path="body.studioName" type="string" required>
+  The name for the new studio.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Studio created successfully"`
+</ResponseField>
+
+<ResponseField name="studio" type="object">
+  The newly created studio. Same shape as [Get studio](#get-studio).
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST http://localhost:9000/studio/create \
+      -H "Authorization: Bearer <token>" \
+      -H "Content-Type: application/json" \
+      -d '{"studioName": "My Podcast Studio"}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Studio created successfully",
+      "studio": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "studioSlug": "my-podcast-studio",
+        "studioName": "My Podcast Studio",
+        "token": "clxxxxxxxxxxxxxxxxxxxxxxx",
+        "userId": "550e8400-e29b-41d4-a716-446655440000",
+        "recordingType": "VIDEO_AUDIO",
+        "audioSampleRate": "KHZ_44_1",
+        "videoQuality": "STANDARD",
+        "language": "English",
+        "noiseReduction": false,
+        "countdownBeforeRecording": false,
+        "enableLobby": false,
+        "enableCaptions": false,
+        "autoStartOnGuestJoin": false,
+        "pauseUploads": false,
+        "createdAt": "2024-01-15T10:30:00.000Z",
+        "updatedAt": "2024-01-15T10:30:00.000Z"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Studio name is required"` | `studioName` missing from body |
+| `400` | `"Studio already exists..."` | User already has a studio |
+| `500` | `"Failed to create studio"` | Unexpected server error |
+
+---
+
+## Update studio
+
+`PUT /studio/update`
+
+Updates the name of an existing studio.
+
+<ParamField path="body.studioId" type="string" required>
+  The ID of the studio to update.
+</ParamField>
+
+<ParamField path="body.studioName" type="string" required>
+  The new studio name.
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Studio updated successfully"`
+</ResponseField>
+
+<ResponseField name="studio" type="object">
+  The updated studio. Same shape as [Get studio](#get-studio).
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X PUT http://localhost:9000/studio/update \
+      -H "Authorization: Bearer <token>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "studioName": "My New Studio Name"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Studio updated successfully",
+      "studio": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "studioName": "My New Studio Name"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Studio ID and studio name are required"` | Missing `studioId` or `studioName` |
+| `500` | `"Failed to update studio"` | Unexpected server error |
+
+---
+
+## Delete studio
+
+`DELETE /studio/delete`
+
+Deletes the authenticated user's studio. All associated projects are cascade-deleted.
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Studio deleted successfully"`
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X DELETE http://localhost:9000/studio/delete \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Studio deleted successfully"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `404` | `"Studio not found"` | No studio exists for this user |
+| `500` | `"Failed to delete studio"` | Unexpected server error |
+
+---
+
+## Update studio setting
+
+`POST /studio/update-setting`
+
+Updates a single named setting on a studio. Use this to toggle individual options without sending the full studio object.
+
+<ParamField path="body.studioId" type="string" required>
+  The ID of the studio to update.
+</ParamField>
+
+<ParamField path="body.settingName" type="string" required>
+  The name of the setting to update. One of:
+  - `countdownBeforeRecording`
+  - `enableLobby`
+  - `language`
+  - `enableCaptions`
+  - `autoStartOnGuestJoin`
+  - `noiseReduction`
+  - `pauseUploads`
+  - `audioSampleRate`
+  - `videoQuality`
+  - `recordingType`
+</ParamField>
+
+<ParamField path="body.settingValue" type="string | boolean" required>
+  The new value for the setting. Type depends on `settingName`:
+  - Boolean settings: `true` or `false`
+  - `audioSampleRate`: `"KHZ_44_1"` or `"KHZ_48"`
+  - `videoQuality`: `"STANDARD"` or `"ADVANCED"`
+  - `recordingType`: `"VIDEO_AUDIO"` or `"AUDIO_ONLY"`
+  - `language`: any supported language string
+</ParamField>
+
+<ResponseField name="success" type="boolean" required>
+  `true` on success.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  `"Studio setting updated successfully"`
+</ResponseField>
+
+<ResponseField name="studio" type="object">
+  The full updated studio object.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST http://localhost:9000/studio/update-setting \
+      -H "Authorization: Bearer <token>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "studioId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "settingName": "noiseReduction",
+        "settingValue": true
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Studio setting updated successfully",
+      "studio": {
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "noiseReduction": true
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Error codes**
+
+| Status | Message | Cause |
+|--------|---------|-------|
+| `400` | `"Studio ID, setting name, and setting value are required"` | Missing required fields |
+| `403` | `"You are not authorized to update this studio setting"` | `studioId` does not belong to the authenticated user |
+| `404` | `"Studio not found"` | No studio found for this user |
+| `500` | `"Failed to update studio setting"` | Unexpected server error |

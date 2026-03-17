@@ -1,0 +1,92 @@
+---
+title: "Environment variables"
+description: "Reference for all environment variables used across the Audora monorepo."
+---
+
+<Warning>
+  Never commit your `.env` file to version control. It contains secrets such as database passwords, OAuth credentials, and signing keys. Add `.env` to your `.gitignore` and use `.env.example` as the committed reference.
+</Warning>
+
+Audora uses a single root `.env` file that is shared across services via Docker Compose. Copy `.env.example` to `.env` and fill in every value before starting the application.
+
+```bash
+cp .env.example .env
+```
+
+## Database
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `POSTGRES_PASSWORD` | string | Yes | Password for the `audora_user` Postgres role used by the Docker container. Must match the password embedded in `DATABASE_URL`. | `s3cr3t_db_pass` |
+| `DATABASE_URL` | string | Yes | Full PostgreSQL connection string used by Prisma. Format: `postgresql://<user>:<password>@<host>:<port>/<db>`. | `postgresql://audora_user:s3cr3t_db_pass@database:5432/audora` |
+
+<Note>
+  When running locally with Docker Compose, use `database` as the hostname — it resolves to the database container. Use `localhost` when connecting from outside Docker (e.g., running migrations from your host machine).
+</Note>
+
+## Auth
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `NEXTAUTH_SECRET` | string | Yes | Signing secret for NextAuth.js session tokens and for all JWTs issued by the API and Signal server. All services share this value. | *(generated — see below)* |
+| `NEXTAUTH_URL` | string | Yes | Canonical URL of the Next.js frontend. NextAuth uses this to build callback and redirect URLs. | `http://localhost:3000` |
+
+### Generating `NEXTAUTH_SECRET`
+
+Generate a cryptographically random 32-byte secret and base64-encode it:
+
+```bash
+openssl rand -base64 32
+```
+
+Paste the output as the value of `NEXTAUTH_SECRET`. The same secret must be set in the API server environment and the Signal server environment, because both services verify JWTs signed by NextAuth.
+
+## Google OAuth
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `GOOGLE_CLIENT_ID` | string | Optional | OAuth 2.0 client ID from Google Cloud Console. Required only if you want to enable Google sign-in. | `123456789-abc.apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_SECRET` | string | Optional | OAuth 2.0 client secret paired with `GOOGLE_CLIENT_ID`. | `GOCSPX-…` |
+
+<Tip>
+  Leave `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` empty to disable Google OAuth entirely. Users can still register and sign in with email and password.
+</Tip>
+
+## Frontend (Next.js public variables)
+
+<Warning>
+  Variables prefixed with `NEXT_PUBLIC_` are embedded into the JavaScript bundle at build time and are visible to every browser. Do not place secrets in `NEXT_PUBLIC_` variables.
+</Warning>
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `NEXT_PUBLIC_SITE_URL` | string | Yes | Public URL of the frontend. Used for absolute links and SEO metadata. | `http://localhost:3000` |
+| `NEXT_PUBLIC_HTTP_URL` | string | Yes | Public URL of the REST API server. The browser uses this to make API requests. | `http://localhost:9000` |
+| `NEXT_PUBLIC_SIGNALING_URL` | string | Yes | WebSocket URL of the Signal server. The browser connects here for WebRTC signaling. | `ws://localhost:8000` |
+| `NEXT_PUBLIC_MEASUREMENT_ID` | string | Optional | Google Analytics 4 measurement ID. Leave empty to disable analytics. | `G-XXXXXXXXXX` |
+
+## API server
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `PORT` | number | No | Port the Express API server listens on. Defaults to `9000`. | `9000` |
+| `FRONTEND_URL` | string | Yes | URL of the frontend. Used by the API to configure CORS and allow cross-origin requests from the browser. | `http://localhost:3000` |
+
+## Kafka
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `KAFKA_BROKERS` | string | Yes | Comma-separated list of Kafka broker addresses. Used by the recording pipeline to produce and consume audio/video chunks. | `localhost:9092` |
+| `KAFKA_TOPIC` | string | Yes | Kafka topic name for recording chunk messages. | `recording-chunks` |
+
+## Signal server
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `DEBUG` | boolean | No | Set to `true` to enable verbose logging in the Signal server. Defaults to `false`. | `false` |
+
+## General
+
+| Variable | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `NODE_ENV` | string | No | Runtime environment. Affects logging behaviour and error detail in responses. Accepted values: `development`, `production`, `test`. | `development` |

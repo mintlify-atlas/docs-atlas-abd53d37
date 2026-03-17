@@ -1,0 +1,310 @@
+---
+title: "Self-hosting guide"
+description: "End-to-end guide to deploy Audora on your own VPS or cloud server"
+---
+
+This guide walks you through running Audora on a server you control — a VPS, a dedicated machine, or a cloud VM. By the end you will have all four services running behind nginx with HTTPS.
+
+<Warning>
+  Never use the placeholder secrets from `.env.example` in production. Change `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, and all other secrets to strong, unique values before exposing your server to the internet.
+</Warning>
+
+## Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| A server running Linux | Ubuntu 22.04 LTS recommended. At least 1 vCPU and 1 GB RAM |
+| Docker 24+ and the Compose plugin | `docker compose version` should return `v2.x` |
+| A domain name | You will need DNS A records pointing to your server's IP |
+| Google OAuth credentials | Create a project at [console.cloud.google.com](https://console.cloud.google.com) |
+
+## DNS setup
+
+Create three A records pointing to your server's public IP:
+
+| Subdomain | Points to | Service |
+|---|---|---|
+| `audora.example.com` | your server IP | Frontend |
+| `api.audora.example.com` | your server IP | Backend API |
+| `signal.audora.example.com` | your server IP | WebSocket signal server |
+
+You can use a single domain with path-based routing instead, but subdomain routing matches the included nginx configuration.
+
+## Step-by-step deployment
+
+<Steps>
+
+### Install Docker on your server
+
+SSH into your server and install Docker using the official convenience script:
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+Verify:
+
+```bash
+docker compose version
+```
+
+### Clone the repository
+
+```bash
+git clone https://github.com/your-org/audora.git
+cd audora
+```
+
+### Configure the environment
+
+Copy the example file and open it for editing:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Set every variable. The table below highlights the values that differ from the local development defaults:
+
+| Variable | Production value |
+|---|---|
+| `POSTGRES_PASSWORD` | A strong random password |
+| `DATABASE_URL` | `postgresql://audora_user:<POSTGRES_PASSWORD>@database:5432/audora` |
+| `NEXTAUTH_SECRET` | Output of `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | `https://audora.example.com` (your public domain) |
+| `NEXT_PUBLIC_SITE_URL` | `https://audora.example.com` |
+| `NEXT_PUBLIC_HTTP_URL` | `https://api.audora.example.com` |
+| `NEXT_PUBLIC_SIGNALING_URL` | `wss://signal.audora.example.com` |
+| `GOOGLE_CLIENT_ID` | Your OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Your OAuth client secret |
+| `FRONTEND_URL` | `https://audora.example.com` |
+
+<Note>
+  `NEXT_PUBLIC_*` variables starting with that prefix are embedded into the Next.js bundle **at build time**. If you change them after the images are built you must rebuild the frontend image.
+</Note>
+
+### Configure Google OAuth
+
+In the [Google Cloud Console](https://console.cloud.google.com):
+
+1. Go to **APIs & Services → Credentials**
+2. Open your OAuth 2.0 client
+3. Under **Authorised redirect URIs**, add:
+   ```
+   https://audora.example.com/api/auth/callback/google
+   ```
+4. Remove the `localhost` redirect URI if it was set for development only
+
+### Build and start the stack
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Watch the logs to confirm all services reach a healthy state:
+
+```bash
+docker compose ps
+docker compose logs -f
+```
+
+### Verify health endpoints
+
+```bash
+curl http://localhost:3000          # frontend
+curl http://localhost:9000/         # backend API
+curl http://localhost:8001/health   # signal server
+```
+
+All three should return a 200 response.
+
+### Install and configure nginx
+
+Install nginx:
+
+```bash
+sudo apt-get update && sudo apt-get install -y nginx
+```
+
+Copy the provided configuration:
+
+```bash
+sudo cp nginx-conf/nginx-prod.conf /etc/nginx/nginx.conf
+```
+
+Edit `/etc/nginx/nginx.conf` and replace `audora.xyz` with your own domain in all three `server_name` directives:
+
+```nginx
+# WebSocket Signal Server
+server {
+    listen 80;
+    server_name signal.audora.example.com;
+    ...
+}
+
+# Backend API
+server {
+    listen 80;
+    server_name api.audora.example.com;
+    ...
+}
+
+# Frontend
+server {
+    listen 80;
+    server_name audora.example.com www.audora.example.com;
+    ...
+}
+```
+
+Test and reload:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### Enable HTTPS with Certbot
+
+<Tip>
+  Use [Certbot](https://certbot.eff.org) (Let's Encrypt) or [Caddy](https://caddyserver.com) to terminate TLS at the reverse proxy layer. Your Docker containers can continue serving plain HTTP on localhost — nginx handles the encryption.
+</Tip>
+
+Install Certbot and obtain certificates for all three subdomains:
+
+```bash
+sudo apt-get install -y certbot python3-certbot-nginx
+sudo certbot --nginx \
+  -d audora.example.com \
+  -d www.audora.example.com \
+  -d api.audora.example.com \
+  -d signal.audora.example.com
+```
+
+Certbot automatically updates the nginx config to listen on port 443 and redirect HTTP → HTTPS.
+
+</Steps>
+
+## nginx configuration
+
+The repository includes a production nginx config at `nginx-conf/nginx-prod.conf`. It defines three virtual hosts:
+
+### Signal server (`signal.audora.example.com`)
+
+```nginx
+server {
+    listen 80;
+    server_name signal.audora.example.com;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+
+        # Keep WebSocket connections alive for up to 30 minutes
+        proxy_read_timeout 1800;
+        proxy_send_timeout 1800;
+    }
+}
+```
+
+The 30-minute timeout prevents WebSocket connections from being dropped during periods of inactivity.
+
+### Backend API (`api.audora.example.com`)
+
+```nginx
+server {
+    listen 80;
+    server_name api.audora.example.com;
+
+    location / {
+        proxy_pass http://localhost:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+### Frontend (`audora.example.com`)
+
+```nginx
+server {
+    listen 80;
+    server_name audora.example.com www.audora.example.com;
+
+    # Cache static assets for 7 days
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|otf|eot)$ {
+        expires 7d;
+        access_log off;
+        proxy_pass http://localhost:3000;
+    }
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+Static assets (JS, CSS, fonts, images) are cached at the proxy layer for 7 days, reducing load on the Next.js container.
+
+## Port and firewall configuration
+
+Only ports 80 and 443 need to be open to the internet. All service ports are accessed by nginx on localhost.
+
+```bash
+# UFW example
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 80/tcp    # HTTP (redirects to HTTPS)
+sudo ufw allow 443/tcp   # HTTPS
+sudo ufw enable
+```
+
+<Warning>
+  Do **not** expose ports 3000, 9000, 8000, 8001, or 5432 directly to the internet. Traffic to those ports should only come from nginx on the same host.
+</Warning>
+
+If you need to restrict Docker from punching holes in your firewall rules, add `DOCKER_OPTS="--iptables=false"` to `/etc/docker/daemon.json` and manage rules manually — or bind the containers to `127.0.0.1` in the ports mapping:
+
+```yaml
+ports:
+  - "127.0.0.1:9000:9000"
+```
+
+## Updates and maintenance
+
+```bash
+# Pull latest code
+git pull origin main
+
+# Rebuild and restart
+docker compose build
+docker compose up -d
+
+# Check all services are healthy
+docker compose ps
+```
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Docker deployment" href="/deployment/docker">
+    Full reference for docker-compose.yaml services, build args, and health checks
+  </Card>
+  <Card title="CI/CD pipelines" href="/deployment/ci-cd">
+    Automate builds and deployments with GitHub Actions
+  </Card>
+</CardGroup>
